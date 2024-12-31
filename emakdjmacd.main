@@ -10,7 +10,7 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '4h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '1d'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -72,8 +72,8 @@ def calculate_kdj(df, period=14):
 def check_ema_cross(df, short_period=3, long_period=7):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
+    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] < df['ema_long'].iloc[-3]
+    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] > df['ema_long'].iloc[-3]
     return cross_over, cross_under
 
 # Function to plot candlesticks with EMA lines, MACD Histogram, and KDJ indicator
@@ -146,18 +146,18 @@ async def main():
                 calculate_kdj(historical_data)
                 ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
                 if ema_cross_over:
-                    message = f'/enter_long {symbol}'
+                    message = f'/set_symbols #Long {symbol}'
                     title = f'EMA Cross Over for {symbol}'
                     image_buffer = plot_candles(historical_data, symbol, title)
                     await send_telegram_message(symbol, message, image_buffer)
                 elif ema_cross_under:
-                    message = f'/enter_short {symbol}'
+                    message = f'/set_symbols #Short {symbol}'
                     title = f'EMA Cross Under for {symbol}'
                     image_buffer = plot_candles(historical_data, symbol, title)
                     await send_telegram_message(symbol, message, image_buffer)
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
-        await asyncio.sleep(900)
+        await asyncio.sleep(1800)
 
 # Initialize Telegram Bot
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
