@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler
 from ta.trend import EMAIndicator
 
 # Binance interval for candlesticks
-interval = '4h'
+interval = '8h'
 
 # Initialize Binance client
 binance = ccxt.binance({
@@ -134,7 +134,7 @@ async def main_trading():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(120)
 
 # Start Telegram bot
 async def start_telegram_bot():
