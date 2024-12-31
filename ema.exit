@@ -64,9 +64,9 @@ def check_ema_crossover(df):
     cross_under = df['short_ema'].iloc[-3] > df['long_ema'].iloc[-3] and df['short_ema'].iloc[-2] < df['long_ema'].iloc[-2]
     return cross_over, cross_under
 
-# Function to send a message to Telegram
+# Function to send a message to Telegram and remove the symbol after alert
 def send_telegram_message(symbol, action, close_price):
-    message = f"/{action} {symbol}"  # Formatting corrected
+    message = f"/{action} {symbol}"
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN_EXIT}/sendMessage"
     params = {"chat_id": config.TELEGRAM_CHAT_ID, "text": message}
 
@@ -75,6 +75,11 @@ def send_telegram_message(symbol, action, close_price):
         if response.status_code == 200:
             print(f"Sent alert for {symbol} with action {action} to Telegram")
             last_alert_messages[symbol] = action
+            
+            # Remove the symbol from the selected_symbols list
+            if symbol in selected_symbols:
+                selected_symbols.remove(symbol)
+                print(f"{symbol} removed from selected symbols list.")
         else:
             print(f"Failed to send Telegram alert for {symbol}: {response.content}")
     except requests.RequestException as e:
@@ -114,7 +119,7 @@ async def reset_symbols(update: Update, context) -> None:
 # Main trading function
 async def main_trading():
     while True:
-        for symbol in selected_symbols:
+        for symbol in selected_symbols[:]:  # Use slicing to safely modify the list
             try:
                 historical_data = get_historical_data(symbol, interval)
                 historical_data = calculate_ema(historical_data)
