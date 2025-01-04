@@ -10,15 +10,15 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '8h'  # Adjust to '4h' if you need 4-hour candlesticks
+# Settings
+interval = '8h'  # Adjust to '4h' if needed
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
+    response.raise_for_status()
     data = response.json()
-
     SELECTED_SYMBOLS = [
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
@@ -42,8 +42,6 @@ def get_historical_data(symbol, interval, limit=50):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
@@ -59,13 +57,13 @@ def calculate_macd(df):
     df['histogram'] = macd.macd_diff()
 
 # Function to calculate KDJ indicator
-def calculate_kdj(df, period=14):
+def calculate_kdj(df, period=9, ma1=3, ma2=3):
     high = df['High'].rolling(window=period).max()
     low = df['Low'].rolling(window=period).min()
     close = df['Close']
     rsv = ((close - low) / (high - low)) * 100
-    df['K'] = rsv.ewm(alpha=1/3, adjust=False).mean()
-    df['D'] = df['K'].ewm(alpha=1/3, adjust=False).mean()
+    df['K'] = rsv.ewm(span=ma1, adjust=False).mean()
+    df['D'] = df['K'].ewm(span=ma2, adjust=False).mean()
     df['J'] = 3 * df['K'] - 2 * df['D']
 
 # Function to check EMA cross
@@ -79,27 +77,19 @@ def check_ema_cross(df, short_period=3, long_period=7):
 # Function to plot candlesticks with EMA lines, MACD Histogram, and KDJ indicator
 def plot_candles(df, symbol, title):
     mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
-
-    # Create custom market colors for up and down candlesticks
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-
-    # Create a custom style using the market colors and other style settings
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-
-    # Add EMA lines, MACD Histogram, and KDJ Indicator to the plot
     short_ema = calculate_ema(df, 3)
     long_ema = calculate_ema(df, 7)
-    calculate_macd(df)  # Calculate MACD values for plotting
-    calculate_kdj(df)  # Calculate KDJ values for plotting
+    calculate_macd(df)
+    calculate_kdj(df)
 
-    # Set dynamic colors for the MACD histogram
     macd_colors = [
         'green' if df['histogram'].iloc[i] > df['histogram'].iloc[i - 1] else 'red'
         for i in range(1, len(df['histogram']))
     ]
-    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
+    macd_colors.insert(0, 'gray')
 
-    # Plot figure
     fig, axlist = mpf.plot(
         mpf_data,
         figratio=(10, 8),
@@ -109,20 +99,16 @@ def plot_candles(df, symbol, title):
         datetime_format='%H:%M',
         ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(short_ema, color='cyan', width=1.5),
+            mpf.make_addplot(long_ema, color='magenta', width=1.5),
             mpf.make_addplot(df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram"),
-            mpf.make_addplot(df['K'], panel=2, color='blue', width=1.5, linestyle='-', ylabel="KDJ"),
-            mpf.make_addplot(df['D'], panel=2, color='orange', width=1.5, linestyle='-'),
-            mpf.make_addplot(df['J'], panel=2, color='purple', width=1.5, linestyle='-')
+            mpf.make_addplot(df['K'], panel=2, color='blue', width=1.5, ylabel="KDJ"),
+            mpf.make_addplot(df['D'], panel=2, color='orange', width=1.5),
+            mpf.make_addplot(df['J'], panel=2, color='purple', width=1.5)
         ],
         returnfig=True
     )
-
-    # Add Title
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
-
-    # Save plot to a BytesIO object
+    axlist[0].set_title(f"{symbol} - {title}", fontsize=20)
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
