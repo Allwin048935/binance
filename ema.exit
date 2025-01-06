@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler
 from ta.trend import EMAIndicator
 
 # Binance interval for candlesticks
-interval = '4h'
+interval = '8h'
 
 # Initialize Binance client
 binance = ccxt.binance({
