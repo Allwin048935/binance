@@ -1,6 +1,6 @@
 # Bitget API credentials
-API_KEY = "bg_0b01ffa94b4b6f3c2ba5df488587a91e"
-API_SECRET = "facbe7d57bbfb8c6fd82a39d2ce5dc35eef578058ec667aa5ad2fc02dffa644a"
+API_KEY = "SvvG1ooYWYpLEZnSMoMbO2qN246CfnCFvB87sVOISg6KPkukq07BpmkqWfWC62yT"
+API_SECRET = "RhAuSUL6iipT1o1yA9yDTdZoRTdqcLM2KSPYxtvrLMBmGlY8KeljnaNoPfFfhltf"
 API_PASSPHRASE = "9025014840"
 
 # 3Commas webhook details
