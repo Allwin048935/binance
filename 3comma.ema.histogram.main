@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import ta library
 
-interval = '4h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '6h'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -84,7 +84,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
     ]
 
     for payload in payloads:
-        print(f"Sending payload: {payload}")
+        print(f"Sending payload: {symbol}")
         try:
             response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
             response.raise_for_status()
