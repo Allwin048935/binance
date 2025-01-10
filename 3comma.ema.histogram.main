@@ -50,7 +50,7 @@ def calculate_macd_histogram(df):
     return macd.macd_diff()
 
 # Function to check MACD and EMA conditions
-def check_macd_ema_conditions(df, short_period=3):
+def check_macd_ema_conditions(df, short_period=5):
     df['ema_short'] = calculate_ema(df, short_period)
     df['macd_histogram'] = calculate_macd_histogram(df)
 
