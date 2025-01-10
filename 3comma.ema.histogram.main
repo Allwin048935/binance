@@ -55,11 +55,11 @@ def check_macd_ema_conditions(df, short_period=5):
     df['macd_histogram'] = calculate_macd_histogram(df)
 
     long_condition = (df['ema_short'].iloc[-2] > df['ema_short'].iloc[-3]) and \ 
-                     (df['macd_histogram'].iloc[-2] > df['macd_histogram'].iloc[-3]) and \ 
-                     (df['macd_histogram'].iloc[-2] <= 0)
+                     (df['macd_histogram'].iloc[-2] > df['macd_histogram'].iloc[-3]) # and \ 
+                    # (df['macd_histogram'].iloc[-2] <= 0)
     short_condition = (df['ema_short'].iloc[-2] < df['ema_short'].iloc[-3]) and \
-                      (df['macd_histogram'].iloc[-2] < df['macd_histogram'].iloc[-3]) and \ 
-                      (df['macd_histogram'].iloc[-2] >= 0)
+                      (df['macd_histogram'].iloc[-2] < df['macd_histogram'].iloc[-3]) # and \ 
+                      # (df['macd_histogram'].iloc[-2] >= 0)
 
     return long_condition, short_condition
 
