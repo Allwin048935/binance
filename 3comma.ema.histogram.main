@@ -87,6 +87,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
     ]
 
     for payload in payloads:
+        print(f"Sending payload: {payload}")
         try:
             response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
             response.raise_for_status()
