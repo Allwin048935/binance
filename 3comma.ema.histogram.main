@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import ta library
 
-interval = '8h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '4h'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -54,9 +54,8 @@ def check_macd_ema_conditions(df, short_period=5):
     df['ema_short'] = calculate_ema(df, short_period)
     df['macd_histogram'] = calculate_macd_histogram(df)
 
-    long_condition = (df['ema_short'].iloc[-2] > df['ema_short'].iloc[-3]) and (df['macd_histogram'].iloc[-2] > df['macd_histogram'].iloc[-3]) #and (df['macd_histogram'].iloc[-2] <= 0)
-    short_condition = (df['ema_short'].iloc[-2] < df['ema_short'].iloc[-3]) and (df['macd_histogram'].iloc[-2] < df['macd_histogram'].iloc[-3]) #and (df['macd_histogram'].iloc[-2] >= 0)
-
+    long_condition = (df['ema_short'].iloc[-4] < df['ema_short'].iloc[-3]) and (df['ema_short'].iloc[-3] < df['ema_short'].iloc[-2]) and (df['macd_histogram'].iloc[-2] > df['macd_histogram'].iloc[-3])
+    short_condition = (df['ema_short'].iloc[-4] > df['ema_short'].iloc[-3]) and (df['ema_short'].iloc[-3] > df['ema_short'].iloc[-2]) and (df['macd_histogram'].iloc[-2] < df['macd_histogram'].iloc[-3])
     return long_condition, short_condition
 
 # Function to send payload to 3Commas
