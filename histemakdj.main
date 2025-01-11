@@ -70,8 +70,8 @@ def calculate_kdj(df, period=14):
 
 # Function to check MACD histogram conditions
 def check_macd_histogram(df):
-    long_condition = df['histogram'].iloc[-2] > df['histogram'].iloc[-3]
-    short_condition = df['histogram'].iloc[-2] < df['histogram'].iloc[-3]
+    long_condition = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-3] > df['histogram'].iloc[-4] and df['histogram'].iloc[-4] < df['histogram'].iloc[-5]
+    short_condition = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-3] < df['histogram'].iloc[-4] and df['histogram'].iloc[-4] > df['histogram'].iloc[-5]
     return long_condition, short_condition
 
 # Function to plot candlesticks with EMA lines, MACD Histogram, and KDJ indicator
