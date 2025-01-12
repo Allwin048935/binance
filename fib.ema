@@ -7,17 +7,16 @@ from io import BytesIO
 import asyncio
 import nest_asyncio
 from telegram import Bot
-import config  # Import the config module
-import ta  # Import ta library
+import config
+import ta
 
-interval_4h = '4h'  # 4-hour candlesticks
-interval_1d = '1d'  # 1-day candlesticks
+interval_4h = '4h'
+interval_1d = '1d'
 
-# Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
+    response.raise_for_status()
     data = response.json()
 
     SELECTED_SYMBOLS = [
@@ -28,38 +27,30 @@ except requests.exceptions.RequestException as e:
     print(f"Error fetching data from Binance: {e}")
     SELECTED_SYMBOLS = []
 
-# Initialize Binance client
 binance = ccxt.binance({
     'apiKey': config.API_KEY,
     'secret': config.API_SECRET,
 })
 
-# Dictionary to store the last alert messages for each symbol
 last_alert_messages = {}
 
-# Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=50):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to calculate EMA using ta library
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to calculate MACD using ta library
 def calculate_macd(df):
     macd = ta.trend.MACD(df['Close'])
     df['macd'] = macd.macd()
     df['signal'] = macd.macd_signal()
     df['histogram'] = macd.macd_diff()
 
-# Function to check EMA cross
 def check_ema_cross(df, short_period=3, long_period=7):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
@@ -69,59 +60,37 @@ def check_ema_cross(df, short_period=3, long_period=7):
 
     return cross_over, cross_under
 
-# Function to plot candlesticks with EMA lines, MACD Histogram, and Fibonacci Retracement
+def calculate_fibonacci_levels(df):
+    high_price = df['High'].max()
+    low_price = df['Low'].min()
+
+    levels = {
+        '0%': high_price,
+        '23.6%': low_price + (high_price - low_price) * 0.236,
+        '38.2%': low_price + (high_price - low_price) * 0.382,
+        '50%': low_price + (high_price - low_price) * 0.5,
+        '61.8%': low_price + (high_price - low_price) * 0.618,
+        '76.4%': low_price + (high_price - low_price) * 0.764,
+        '100%': low_price
+    }
+    return levels
+
 def plot_candles(df_4h, df_1d, symbol, title):
     mpf_data = df_4h[['Open', 'High', 'Low', 'Close']].copy()
 
-    # Create custom market colors for up and down candlesticks
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-
-    # Create a custom style using the market colors and other style settings
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
-    # Add EMA lines and MACD Histogram to the plot
     short_ema = calculate_ema(df_4h, 3)
     long_ema = calculate_ema(df_4h, 7)
-    calculate_macd(df_4h)  # Calculate MACD values for plotting
+    calculate_macd(df_4h)
 
-    # Set dynamic colors for the MACD histogram based on the comparison with the previous value
     macd_colors = [
         'green' if df_4h['histogram'].iloc[i] > df_4h['histogram'].iloc[i - 1] else 'red'
         for i in range(1, len(df_4h['histogram']))
     ]
-    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
+    macd_colors.insert(0, 'gray')
 
-    # Calculate Fibonacci retracement levels
-    high_1d = df_1d['High'].max()
-    low_1d = df_1d['Low'].min()
-    diff = high_1d - low_1d
-
-    levels = {
-        '0%': low_1d,
-        '23.6%': high_1d - 0.236 * diff,
-        '38.2%': high_1d - 0.382 * diff,
-        '50%': high_1d - 0.5 * diff,
-        '61.8%': high_1d - 0.618 * diff,
-        '78.6%': high_1d - 0.786 * diff,
-        '100%': high_1d
-    }
-
-    hlines = [
-        {
-            'y': level,
-            'linestyle': '-',  # Solid line style
-            'color': 'blue' if key in ['0%', '100%'] else 'green' if key == '50%' else 'orange'
-        }
-        for key, level in levels.items()
-    ]
-
-    # Annotate each Fibonacci level with price and percentage
-    hline_labels = [
-        f"{key}: {level:.2f} ({(level / low_1d - 1) * 100:.2f}%)"
-        for key, level in levels.items()
-    ]
-
-    # Plot figure with custom ratio and return it for further customization
     fig, axlist = mpf.plot(
         mpf_data,
         figratio=(10, 6),
@@ -135,48 +104,47 @@ def plot_candles(df_4h, df_1d, symbol, title):
             mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
             mpf.make_addplot(df_4h['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
         ],
-        hlines=dict(hlines=[h['y'] for h in hlines], colors=[h['color'] for h in hlines], linewidths=1.5, linestyle='-'),
         returnfig=True
     )
 
-    # Add Title and Fibonacci labels
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
-    for label, level in zip(hline_labels, levels.values()):
-        axlist[0].annotate(label, (df_4h.index[-1], level), textcoords="offset points", xytext=(0, 10), ha='center', fontsize=9, color='yellow')
+    ax_candles = axlist[0]
+    levels = calculate_fibonacci_levels(df_1d)
 
-    # Save plot to a BytesIO object
+    ylim_lower = min(df_4h['Low'].min(), min(levels.values()))
+    ylim_upper = max(df_4h['High'].max(), max(levels.values()))
+    ax_candles.set_ylim(ylim_lower, ylim_upper)
+
+    for level, value in levels.items():
+        ax_candles.axhline(y=value, color='white', linestyle='-', linewidth=1.5)
+        ax_candles.text(df_4h.index[-1], value, f'{level} ({value:.2f})',
+                        verticalalignment='center', horizontalalignment='left',
+                        color='white', fontsize=10, bbox=dict(facecolor='black', alpha=0.5))
+
+    ax_candles.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
+
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
-
-    # Close the figure to avoid memory overflow
     plt.close(fig)
 
     return buf
 
-# Function to send Telegram message and image
 async def send_telegram_message(symbol, message, image_buffer):
     if last_alert_messages.get(symbol) != message:
         await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
         await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
         last_alert_messages[symbol] = message
 
-# Main function
 async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                # Fetch historical data
                 historical_data_4h = get_historical_data(symbol, interval_4h)
                 historical_data_1d = get_historical_data(symbol, interval_1d)
 
-                # Calculate MACD to ensure columns are available
                 calculate_macd(historical_data_4h)
-
-                # Check EMA crossovers
                 ema_cross_over, ema_cross_under = check_ema_cross(historical_data_4h)
 
-                # EMA cross events
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
                     title = f'EMA Cross Over for {symbol}'
@@ -191,13 +159,8 @@ async def main():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(900)  # Sleep duration as needed
+        await asyncio.sleep(900)
 
-# Initialize Telegram Bot
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
-
-# Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
-
-# Create and run the event loop
 asyncio.run(main())
