@@ -59,18 +59,17 @@ def calculate_macd(df):
     df['histogram'] = macd.macd_diff()
 
 # Function to calculate Fibonacci retracement levels
-def calculate_fibonacci_levels(df):
+def calculate_fibonacci_retracement(df):
     high = df['High'].max()
     low = df['Low'].min()
     diff = high - low
-
     levels = {
-        '0%': low,
-        '23.6%': high - diff * 0.236,
-        '38.2%': high - diff * 0.382,
-        '50%': high - diff * 0.5,
-        '61.8%': high - diff * 0.618,
-        '100%': high
+        '0.0%': high,
+        '23.6%': high - 0.236 * diff,
+        '38.2%': high - 0.382 * diff,
+        '50.0%': high - 0.500 * diff,
+        '61.8%': high - 0.618 * diff,
+        '100.0%': low
     }
     return levels
 
@@ -84,7 +83,7 @@ def check_ema_cross(df, short_period=3, long_period=7):
 
     return cross_over, cross_under
 
-# Updated function to plot candlesticks with EMA lines, MACD Histogram, and Fibonacci levels
+# Updated function to plot candlesticks with EMA lines, MACD Histogram, and Fibonacci retracement levels
 def plot_candles(df, symbol, title):
     mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
 
@@ -106,9 +105,8 @@ def plot_candles(df, symbol, title):
     ]
     macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
 
-    # Calculate Fibonacci levels
-    fibonacci_levels = calculate_fibonacci_levels(df)
-    fib_lines = [dict(level=fibonacci_levels[key], color='gray', alpha=0.5, linestyle='--') for key in fibonacci_levels]
+    # Calculate Fibonacci retracement levels
+    fib_levels = calculate_fibonacci_retracement(df)
 
     # Plot figure with custom ratio and return it for further customization
     fig, axlist = mpf.plot(
@@ -124,8 +122,7 @@ def plot_candles(df, symbol, title):
             mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
             mpf.make_addplot(df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
         ],
-        hlines=fibonacci_levels.values(),
-        hlines_kwargs=dict(colors=['gray'], linestyle='--', linewidths=0.5),
+        hlines=list(fib_levels.values()),
         returnfig=True
     )
 
