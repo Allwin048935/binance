@@ -10,7 +10,7 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '1h'  # 4-hour candlesticks
+interval = '4h'  # 4-hour candlesticks
 fib_interval = '1d'  # 1-day candlesticks for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
@@ -131,9 +131,9 @@ def plot_candles(df, fib_df, symbol, title):
 
     # Annotate Fibonacci levels
     for level, price in fib_levels.items():
-        ax.axhline(price, color='blue', linestyle='-', linewidth=1)
+        ax.axhline(price, color='yellow', linestyle='-', linewidth=2)
         ax.annotate(f'{level}: {price:.2f}', xy=(1, price), xytext=(5, 0), textcoords='offset points',
-                    ha='left', va='center', color='white', fontsize=8, backgroundcolor='black')
+                    ha='left', va='center', color='black', fontsize=8, backgroundcolor='white')
 
     # Adjust the y-axis limits to ensure at least two Fibonacci levels are visible
     ylim = [min(fib_levels.values()) - (0.05 * (max(fib_levels.values()) - min(fib_levels.values()))),
