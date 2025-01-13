@@ -10,7 +10,7 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '4h'  # 4-hour candlesticks
+interval = '1h'  # 4-hour candlesticks
 fib_interval = '1d'  # 1-day candlesticks for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
