@@ -6,10 +6,9 @@ import nest_asyncio
 from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
-import time
 
-interval = '15m'  # 15-minute candlesticks
-fib_interval = '8h'  # 8-hour candlesticks for Fibonacci levels
+interval = '15m'  # 4-hour candlesticks
+fib_interval = '8h'  # 1-day candlesticks for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -41,7 +40,7 @@ def get_historical_data(symbol, interval, limit=50):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-    
+
     # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
@@ -64,7 +63,7 @@ def calculate_fibonacci_levels(df):
         '61.8%': high_price - 0.618 * diff,
         '100.0%': low_price
     }
-    return levels
+    return {key: f"{value:.5f}" for key, value in levels.items()}
 
 # Function to check EMA cross with Fibonacci levels
 def check_ema_fib_cross(df, fib_levels):
@@ -72,11 +71,11 @@ def check_ema_fib_cross(df, fib_levels):
     df['ema_short'] = ema_short
 
     cross_over = any(
-        df['ema_short'].iloc[-2] > fib_level and df['ema_short'].iloc[-3] < fib_level
+        df['ema_short'].iloc[-2] > float(fib_level) and df['ema_short'].iloc[-3] < float(fib_level)
         for fib_level in fib_levels.values()
     )
     cross_under = any(
-        df['ema_short'].iloc[-2] < fib_level and df['ema_short'].iloc[-3] > fib_level
+        df['ema_short'].iloc[-2] < float(fib_level) and df['ema_short'].iloc[-3] > float(fib_level)
         for fib_level in fib_levels.values()
     )
 
@@ -84,9 +83,10 @@ def check_ema_fib_cross(df, fib_levels):
 
 # Function to send Telegram message
 async def send_telegram_message(symbol, message, fib_levels):
+    formatted_levels = "\n".join([f"{key}: {value}" for key, value in fib_levels.items()])
+    full_message = f"{message}\nFibonacci Levels:\n{formatted_levels}"
+
     if last_alert_messages.get(symbol) != message:
-        fib_message = "\n".join([f"{level}: {price:.2f}" for level, price in fib_levels.items()])
-        full_message = f"{message}\nFibonacci Levels:\n{fib_message}"
         await telegram_bot.send_message(chat_id=config.CHAT_ID, text=full_message)
         last_alert_messages[symbol] = message
 
@@ -143,11 +143,11 @@ async def main():
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, "buy", historical_data['Close'].iloc[-1], int(time.time()))
+                    await send_3commas_payload(symbol, 'long', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
                 elif ema_cross_under:
                     message = f'/enter_short {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, "sell", historical_data['Close'].iloc[-1], int(time.time()))
+                    await send_3commas_payload(symbol, 'short', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
