@@ -6,9 +6,10 @@ import nest_asyncio
 from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
+import time
 
-interval = '15m'  # 4-hour candlesticks
-fib_interval = '8h'  # 1-day candlesticks for Fibonacci levels
+interval = '15m'  # 15-minute candlesticks
+fib_interval = '8h'  # 8-hour candlesticks for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -40,7 +41,7 @@ def get_historical_data(symbol, interval, limit=50):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
+    
     # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
@@ -82,10 +83,46 @@ def check_ema_fib_cross(df, fib_levels):
     return cross_over, cross_under
 
 # Function to send Telegram message
-async def send_telegram_message(symbol, message):
+async def send_telegram_message(symbol, message, fib_levels):
     if last_alert_messages.get(symbol) != message:
-        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
+        fib_message = "\n".join([f"{level}: {price:.2f}" for level, price in fib_levels.items()])
+        full_message = f"{message}\nFibonacci Levels:\n{fib_message}"
+        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=full_message)
         last_alert_messages[symbol] = message
+
+# Function to send payload to 3Commas
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    payloads = [
+        {
+            "secret": config.SECRET_1,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bybit",
+            "tv_instrument": symbol.replace('/', '') + '.P',
+            "action": action,
+            "bot_uuid": config.BOT_UUID_1,
+        },
+        {
+            "secret": config.SECRET_2,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bybit",
+            "tv_instrument": symbol.replace('/', '') + '.P',
+            "action": action,
+            "bot_uuid": config.BOT_UUID_2,
+        }
+    ]
+
+    for payload in payloads:
+        print(f"Sending payload: {symbol}")
+        try:
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+            response.raise_for_status()
+            print(f"Payload sent for {symbol} with action {action}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error sending payload for {symbol}: {e}")
 
 # Main function
 async def main():
@@ -105,10 +142,12 @@ async def main():
                 # EMA cross events
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
-                    await send_telegram_message(symbol, message)
+                    await send_telegram_message(symbol, message, fib_levels)
+                    await send_3commas_payload(symbol, "buy", historical_data['Close'].iloc[-1], int(time.time()))
                 elif ema_cross_under:
                     message = f'/enter_short {symbol}'
-                    await send_telegram_message(symbol, message)
+                    await send_telegram_message(symbol, message, fib_levels)
+                    await send_3commas_payload(symbol, "sell", historical_data['Close'].iloc[-1], int(time.time()))
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
