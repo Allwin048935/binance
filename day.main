@@ -81,7 +81,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "Bitget",
-            "tv_instrument": symbol.replace('/', '') + '.P',
+            "tv_instrument": symbol.replace('/', ''),
             "action": action,
             "bot_uuid": config.BOT_UUID_1,
         },
@@ -91,7 +91,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "Bitget",
-            "tv_instrument": symbol.replace('/', '') + '.P',
+            "tv_instrument": symbol.replace('/', ''),
             "action": action,
             "bot_uuid": config.BOT_UUID_2,
         }
