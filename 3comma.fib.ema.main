@@ -7,8 +7,8 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '15m'  # 4-hour candlesticks
-fib_interval = '8h'  # 1-day candlesticks for Fibonacci levels
+interval = '5m'  # 4-hour candlesticks
+fib_interval = '1d'  # 1-day candlesticks for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -98,7 +98,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
-            "tv_exchange": "bybit",
+            "tv_exchange": "Bitget",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
             "bot_uuid": config.BOT_UUID_1,
@@ -108,7 +108,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
-            "tv_exchange": "bybit",
+            "tv_exchange": "Bitget",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
             "bot_uuid": config.BOT_UUID_2,
@@ -143,16 +143,16 @@ async def main():
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, 'long', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
+                    await send_3commas_payload(symbol, 'enter_long', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
                 elif ema_cross_under:
                     message = f'/enter_short {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, 'short', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
+                    await send_3commas_payload(symbol, 'enter_short', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(900)  # Sleep duration as needed
+        await asyncio.sleep(300)  # Sleep duration as needed
 
 # Initialize Telegram Bot
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
