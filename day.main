@@ -3,6 +3,7 @@ import pandas as pd
 import asyncio
 import nest_asyncio
 import requests
+import config
 from datetime import datetime, timezone
 
 interval = '5m'  # 5-minute candlesticks
