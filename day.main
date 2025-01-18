@@ -123,7 +123,7 @@ async def main():
                     if cross_over:
                         await send_3commas_payload(symbol, "enter_long", close_price, timestamp)
                     elif cross_under:
-                        await send_3commas_payload(symbol, "enter_short", close_price, timestamp)
+                        await send_3commas_payload(symbol, "exit_long", close_price, timestamp)
                 else:
                     print(f"Amplitude condition not met for {symbol}, skipping...")
 
