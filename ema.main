@@ -1,16 +1,20 @@
-import requests
 import ccxt
 import pandas as pd
-import matplotlib.pyplot as plt
-import mplfinance as mpf
-from io import BytesIO
 import asyncio
 import nest_asyncio
-from telegram import Bot
-import config  # Import the config module
-import ta  # Import ta library
+import requests
+from datetime import datetime, timezone
 
-interval = '4h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '5m'  # 15-minute candlesticks
+
+# Initialize binance client
+binance = ccxt.binance({
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
+})
+
+# Dictionary to store the last alert messages for each symbol
+last_alert_messages = {}
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -25,143 +29,112 @@ try:
     ]
 except requests.exceptions.RequestException as e:
     print(f"Error fetching data from Binance: {e}")
-    SELECTED_SYMBOLS = []
-
-# Initialize Binance client
-binance = ccxt.binance({
-    'apiKey': config.API_KEY,
-    'secret': config.API_SECRET,
-})
-
-# Dictionary to store the last alert messages for each symbol
-last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=50):
+def get_historical_data(symbol, interval, limit=20):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
-    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to calculate EMA using ta library
-def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
+# Function to get day open price
+def get_day_open_price(symbol):
+    day_ohlcv = binance.fetch_ohlcv(symbol, '1d', limit=3)
+    df_day = pd.DataFrame(day_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df_day['timestamp'] = pd.to_datetime(df_day['timestamp'], unit='ms')
+    df_day.set_index('timestamp', inplace=True)
+    # Get the open price of the latest day candle
+    day_open_price = df_day['close'].iloc[-2]
+    return day_open_price
 
-# Function to calculate MACD using ta library
-def calculate_macd(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['macd'] = macd.macd()
-    df['signal'] = macd.macd_signal()
-    df['histogram'] = macd.macd_diff()
+# Function to calculate SMA
+def calculate_sma(df, period):
+    return df['close'].rolling(window=period).mean()
 
-# Function to check EMA cross
-def check_ema_cross(df, short_period=3, long_period=7):
-    df['ema_short'] = calculate_ema(df, short_period)
-    df['ema_long'] = calculate_ema(df, long_period)
-
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
-
+# Function to check SMA crossover against day open price
+def check_sma_crossover_vs_day_open(df, day_open_price, short_period=3):
+    df['sma_short'] = calculate_sma(df, short_period)
+    cross_over = df['sma_short'].iloc[-2] > day_open_price
+    cross_under = df['sma_short'].iloc[-2] < day_open_price
     return cross_over, cross_under
 
-# Updated function to plot candlesticks with EMA lines and MACD Histogram
-def plot_candles(df, symbol, title):
-    mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
+# Function to get previous day's amplitude ratio
+def get_previous_day_amplitude(symbol):
+    # Fetch 1-day candlesticks, limit to 2 (current and previous days)
+    daily_ohlcv = binance.fetch_ohlcv(symbol, '1d', limit=5)
+    df_daily = pd.DataFrame(daily_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df_daily['timestamp'] = pd.to_datetime(df_daily['timestamp'], unit='ms')
+    df_daily.set_index('timestamp', inplace=True)
+    
+    # Get the amplitude of the previous day
+    prev_day_high = df_daily['high'].iloc[-2]
+    prev_day_low = df_daily['low'].iloc[-2]
+    
+    # Calculate amplitude ratio (high/low)
+    amplitude_ratio = prev_day_high / prev_day_low
+    return amplitude_ratio
 
-    # Create custom market colors for up and down candlesticks
-    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
+# Function to send a message to 3commas using a webhook
+def send_3commas_message(symbol, action, close_price):
+    if last_alert_messages.get(symbol) != action:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "secret": config.SECRET,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "BINANCE",
+            "tv_instrument": symbol.replace('/', '') + '.P',
+            "action": action,
+            "bot_uuid": "2cb946f7-4b8e-4a76-93d8-76fd0d6900d0"
+        }
 
-    # Create a custom style using the market colors and other style settings
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+        try:
+            url = config.THREE_COMMAS_WEBHOOK_URL
+            response = requests.post(url, json=payload)
 
-    # Add EMA lines and MACD Histogram to the plot
-    short_ema = calculate_ema(df, 3)
-    long_ema = calculate_ema(df, 7)
-    calculate_macd(df)  # Calculate MACD values for plotting
+            if response.status_code == 200:
+                print(f"Successfully sent alert for {symbol} with action {action}")
+                last_alert_messages[symbol] = action
+            else:
+                print(f"Failed to send alert for {symbol}: {response.content}")
 
-    # Set dynamic colors for the MACD histogram based on the comparison with the previous value
-    macd_colors = [
-        'green' if df['histogram'].iloc[i] > df['histogram'].iloc[i - 1] else 'red'
-        for i in range(1, len(df['histogram']))
-    ]
-    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
+        except requests.RequestException as e:
+            print(f"Error sending request for {symbol}: {e}")
 
-    # Plot figure with custom ratio and return it for further customization
-    fig, axlist = mpf.plot(
-        mpf_data,
-        figratio=(10, 6),
-        type="candle",
-        style=s,
-        tight_layout=True,
-        datetime_format='%H:%M',
-        ylabel="Price ($)",
-        addplot=[
-            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
-            mpf.make_addplot(df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
-        ],
-        returnfig=True
-    )
-
-    # Add Title
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
-
-    # Save plot to a BytesIO object
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-
-    # Close the figure to avoid memory overflow
-    plt.close(fig)
-
-    return buf
-
-# Function to send Telegram message and image
-async def send_telegram_message(symbol, message, image_buffer):
-    if last_alert_messages.get(symbol) != message:
-        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
-        await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
-        last_alert_messages[symbol] = message
-
-# Main function
+# Main function (now defined as async)
 async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                # Fetch historical data
+                # Fetch historical data and day open price only once per symbol
                 historical_data = get_historical_data(symbol, interval)
+                day_open_price = get_day_open_price(symbol)  # Get the day open price
+                cross_over, cross_under = check_sma_crossover_vs_day_open(historical_data, day_open_price)
 
-                # Calculate MACD to ensure columns are available
-                calculate_macd(historical_data)
+                close_price = historical_data['close'].iloc[-1]
 
-                # Check EMA crossovers
-                ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
+                # Get amplitude ratio for the previous day
+                amplitude_ratio = get_previous_day_amplitude(symbol)
 
-                # EMA cross events
-                if ema_cross_over:
-                    message = f'/enter_long {symbol}'
-                    title = f'EMA Cross Over for {symbol}'
-                    image_buffer = plot_candles(historical_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer)
-                elif ema_cross_under:
-                    message = f'/enter_short {symbol}'
-                    title = f'EMA Cross Under for {symbol}'
-                    image_buffer = plot_candles(historical_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer)
+                # Check if the amplitude ratio condition is met (minimum 1.1 for 10% change)
+                if amplitude_ratio >= 1.08:
+                    # Determine the action based on SMA crossover compared to day open price
+                    if cross_over:
+                        send_3commas_message(symbol, "enter_long", close_price)
+                    elif cross_under:
+                        send_3commas_message(symbol, "enter_short", close_price)
+                else:
+                    print(f"Amplitude condition not met for {symbol}, skipping...")
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(900)  # Sleep duration as needed
+        # Sleep for a while before checking again
+        await asyncio.sleep(300)  # Sleep for 15 minutes (in seconds)
 
-# Initialize Telegram Bot
-telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
-
-# Use nest_asyncio for Jupyter compatibility
+# Use nest_asyncio to allow running asyncio in Jupyter notebooks
 nest_asyncio.apply()
 
 # Create and run the event loop
