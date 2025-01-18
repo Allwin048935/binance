@@ -143,11 +143,11 @@ async def main():
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, 'enter_long', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
+                    await send_3commas_payload(symbol, 'exit_short', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
                 elif ema_cross_under:
                     message = f'/enter_short {symbol}'
                     await send_telegram_message(symbol, message, fib_levels)
-                    await send_3commas_payload(symbol, 'enter_short', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
+                    await send_3commas_payload(symbol, 'exit_long', historical_data['Close'].iloc[-1], int(historical_data.index[-1].timestamp()))
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
