@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import ta library
 
-interval = '6h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '8h'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -66,7 +66,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
-            "tv_exchange": "bybit",
+            "tv_exchange": "Binance",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
             "bot_uuid": config1.BOT_UUID_1,
@@ -76,7 +76,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
-            "tv_exchange": "bybit",
+            "tv_exchange": "Binance",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
             "bot_uuid": config1.BOT_UUID_2,
