@@ -81,7 +81,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
 
     for payload in payloads:
         try:
-            response = requests.post('https://3commas.io/trade_signal/trading_view', json=payload)
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
             response.raise_for_status()
             print(f"Payload sent for {symbol} with action {action}")
         except requests.exceptions.RequestException as e:
