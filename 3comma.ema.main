@@ -29,6 +29,9 @@ binance = ccxt.binance({
     'secret': config1.API_SECRET,
 })
 
+# Dictionary to track the last alert message sent for each symbol
+last_alert_messages = {}
+
 # Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=50):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
@@ -102,9 +105,22 @@ async def main():
 
                 # EMA cross events
                 if ema_cross_over:
-                    await send_3commas_payload(symbol, 'enter_long', close_price, timestamp)
+                    action = 'enter_long'
                 elif ema_cross_under:
-                    await send_3commas_payload(symbol, 'enter_short', close_price, timestamp)
+                    action = 'enter_short'
+                else:
+                    action = None
+
+                if action:
+                    # Check if the last message is the same as the current one
+                    last_message = last_alert_messages.get(symbol)
+                    current_message = f"{symbol}:{action}"
+
+                    if last_message != current_message:
+                        await send_3commas_payload(symbol, action, close_price, timestamp)
+                        last_alert_messages[symbol] = current_message
+                    else:
+                        print(f"Skipping duplicate message for {symbol}: {action}")
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
