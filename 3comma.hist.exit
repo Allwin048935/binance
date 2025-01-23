@@ -95,6 +95,8 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
 
 # Main function
 async def main():
+    last_alert_messages = {}
+
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
@@ -106,11 +108,13 @@ async def main():
                 close_price = historical_data['Close'].iloc[-1]
                 timestamp = int(historical_data.index[-1].timestamp())
 
-                # MACD and EMA conditions
-                if long_condition:
+                # Determine the action to be taken
+                if long_condition and last_alert_messages.get(symbol) != 'exit_short':
                     await send_3commas_payload(symbol, 'exit_short', close_price, timestamp)
-                elif short_condition:
+                    last_alert_messages[symbol] = 'exit_short'
+                elif short_condition and last_alert_messages.get(symbol) != 'exit_long':
                     await send_3commas_payload(symbol, 'exit_long', close_price, timestamp)
+                    last_alert_messages[symbol] = 'exit_long'
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
