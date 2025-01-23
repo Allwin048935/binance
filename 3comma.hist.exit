@@ -77,7 +77,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
-            "tv_exchange": "Bitgett",
+            "tv_exchange": "Bitget",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
             "bot_uuid": config1.BOT_UUID_2,
