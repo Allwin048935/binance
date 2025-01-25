@@ -125,7 +125,7 @@ async def main():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(3600)  # Sleep duration as needed
+        await asyncio.sleep(1800)  # Sleep duration as needed
 
 # Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
