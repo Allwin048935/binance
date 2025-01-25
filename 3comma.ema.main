@@ -52,8 +52,8 @@ def check_ema_cross(df, short_period=3, long_period=10):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
 
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
+    cross_over = df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] <= df['ema_long'].iloc[-2]
+    cross_under = df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] >= df['ema_long'].iloc[-2]
 
     return cross_over, cross_under
 
@@ -105,9 +105,9 @@ async def main():
 
                 # EMA cross events
                 if ema_cross_over:
-                    action = 'enter_long'
+                    action = 'exit_short'
                 elif ema_cross_under:
-                    action = 'enter_short'
+                    action = 'exit_long'
                 else:
                     action = None
 
@@ -125,7 +125,7 @@ async def main():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(900)  # Sleep duration as needed
+        await asyncio.sleep(3600)  # Sleep duration as needed
 
 # Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
