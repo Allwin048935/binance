@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import the ta library
 
-interval = '1d'  # Original candlestick interval
+interval = '1h'  # Original candlestick interval
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -44,7 +44,7 @@ def get_historical_data(symbol, interval, limit=100):
     return df
 
 # Function to create Renko data with fixed percentage brick size
-def create_renko_data_with_fixed_percentage(df, percentage=5):
+def create_renko_data_with_fixed_percentage(df, percentage=1):
     renko_data = []
     last_close = None
     brick_size = percentage / 100  # Convert percentage to decimal
@@ -121,7 +121,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert historical data to Renko using fixed percentage brick size
-                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=2)
+                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=1)
 
                 # Check EMA crossovers on Renko data
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
@@ -150,7 +150,7 @@ async def main():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(1800)  # Sleep duration as needed
+        await asyncio.sleep(300)  # Sleep duration as needed
 
 # Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
