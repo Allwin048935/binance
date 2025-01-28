@@ -43,32 +43,22 @@ def get_historical_data(symbol, interval, limit=100):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to calculate ATR using the ta library
-def calculate_atr(df, period=14):
-    atr_indicator = ta.volatility.AverageTrueRange(
-        high=df['High'], low=df['Low'], close=df['Close'], window=period
-    )
-    return atr_indicator.average_true_range()
-
-# Function to create Renko data with dynamic ATR-based brick size
-def create_renko_data_with_atr(df, atr_values):
+# Function to create Renko data with fixed percentage brick size
+def create_renko_data_with_fixed_percentage(df, percentage=2):
     renko_data = []
     last_close = None
+    brick_size = percentage / 100  # Convert percentage to decimal
 
     for index, row in df.iterrows():
         close = row['Close']
-        atr = atr_values.loc[index]  # Get the ATR value for the current row
-
-        if pd.isna(atr):  # Skip rows where ATR is not calculated yet
-            continue
 
         if last_close is None:
             renko_data.append({'timestamp': index, 'Close': close})
             last_close = close
         else:
-            while abs(close - last_close) >= atr:
+            while abs(close - last_close) / last_close >= brick_size:
                 direction = 1 if close > last_close else -1
-                last_close += direction * atr
+                last_close += direction * last_close * brick_size
                 renko_data.append({'timestamp': index, 'Close': last_close})
 
     renko_df = pd.DataFrame(renko_data)
@@ -84,8 +74,8 @@ def check_ema_cross(df, short_period=3, long_period=10):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
 
-    cross_over = df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] >= df['ema_long'].iloc[-2]
-    cross_under = df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] <= df['ema_long'].iloc[-2]
+    cross_over = df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] <= df['ema_long'].iloc[-2]
+    cross_under = df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] >= df['ema_long'].iloc[-2]
 
     return cross_over, cross_under
 
@@ -130,11 +120,8 @@ async def main():
                 # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
 
-                # Calculate ATR values for dynamic brick size
-                atr_values = calculate_atr(historical_data)
-
-                # Convert historical data to Renko using ATR-based brick size
-                renko_data = create_renko_data_with_atr(historical_data, atr_values)
+                # Convert historical data to Renko using fixed percentage brick size
+                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=2)
 
                 # Check EMA crossovers on Renko data
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
