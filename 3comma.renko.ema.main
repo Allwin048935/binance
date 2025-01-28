@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import the ta library
 
-interval = '2h'  # Original candlestick interval
+interval = '1d'  # Original candlestick interval
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -44,7 +44,7 @@ def get_historical_data(symbol, interval, limit=100):
     return df
 
 # Function to create Renko data with fixed percentage brick size
-def create_renko_data_with_fixed_percentage(df, percentage=2):
+def create_renko_data_with_fixed_percentage(df, percentage=5):
     renko_data = []
     last_close = None
     brick_size = percentage / 100  # Convert percentage to decimal
