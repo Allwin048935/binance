@@ -10,7 +10,7 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '15m'  # 5-minute candlesticks
+interval = '5m'  # 5-minute candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -91,8 +91,8 @@ def plot_renko(df, symbol, title, brick_size_percent):
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
     
-    short_ema = calculate_ema(renko_df, 3)
-    long_ema = calculate_ema(renko_df, 7)
+    short_ema = calculate_ema(renko_df, 5)
+    long_ema = calculate_ema(renko_df, 10)
     
     fig, axlist = mpf.plot(
         renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
@@ -128,7 +128,7 @@ async def main():
             try:
                 historical_data = get_historical_data(symbol, interval)
                 
-                renko_df = convert_to_renko(historical_data, brick_size_percent=2)  # Use 2% brick size
+                renko_df = convert_to_renko(historical_data, brick_size_percent=5)  # Use 2% brick size
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
