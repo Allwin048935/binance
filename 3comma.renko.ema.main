@@ -44,7 +44,7 @@ def get_historical_data(symbol, interval, limit=100):
     return df
 
 # Function to create Renko data with fixed percentage brick size
-def create_renko_data_with_fixed_percentage(df, percentage=1):
+def create_renko_data_with_fixed_percentage(df, percentage=2):
     renko_data = []
     last_close = None
     brick_size = percentage / 100  # Convert percentage to decimal
@@ -121,7 +121,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert historical data to Renko using fixed percentage brick size
-                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=1)
+                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=2)
 
                 # Check EMA crossovers on Renko data
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
