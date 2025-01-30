@@ -10,16 +10,14 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '2h'  # 4-hour candlesticks
-fib_interval = '1d'  # 1-day candlesticks for Fibonacci levels
+interval = '2h'  # 2-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
+    response.raise_for_status()
     data = response.json()
-
     SELECTED_SYMBOLS = [
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
@@ -43,8 +41,6 @@ def get_historical_data(symbol, interval, limit=50):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
@@ -80,65 +76,19 @@ def convert_to_renko(df, brick_size_percent):
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to calculate MACD using ta library
-def calculate_macd(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['macd'] = macd.macd()
-    df['signal'] = macd.macd_signal()
-    df['histogram'] = macd.macd_diff()
-
-# Function to check EMA cross
-def check_ema_cross(df, short_period=3, long_period=7):
-    df['ema_short'] = calculate_ema(df, short_period)
-    df['ema_long'] = calculate_ema(df, long_period)
-
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
-
-    return cross_over, cross_under
-
-# Function to calculate Fibonacci levels
-def calculate_fibonacci_levels(df):
-    high_price = df['High'].max()
-    low_price = df['Low'].min()
-
-    diff = high_price - low_price
-    levels = {
-        '0.0%': high_price,
-        '23.6%': high_price - 0.236 * diff,
-        '38.2%': high_price - 0.382 * diff,
-        '50.0%': high_price - 0.5 * diff,
-        '61.8%': high_price - 0.618 * diff,
-        '100.0%': low_price
-    }
-    return levels
-
-# Updated function to plot Renko bricks with EMA lines, MACD Histogram, and Fibonacci levels
-def plot_renko(df, fib_df, symbol, title, brick_size_percent):
+# Function to plot Renko bricks with EMA lines
+def plot_renko(df, symbol, title, brick_size_percent):
     renko_df = convert_to_renko(df, brick_size_percent)
 
     # Create custom market colors for up and down Renko bricks
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-
-    # Create a custom style using the market colors and other style settings
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
-    # Add EMA lines and MACD Histogram to the plot
+    # Add EMA lines to the plot
     short_ema = calculate_ema(renko_df, 3)
     long_ema = calculate_ema(renko_df, 7)
-    calculate_macd(renko_df)  # Calculate MACD values for plotting
 
-    # Set dynamic colors for the MACD histogram based on the comparison with the previous value
-    macd_colors = [
-        'green' if renko_df['histogram'].iloc[i] > renko_df['histogram'].iloc[i - 1] else 'red'
-        for i in range(1, len(renko_df['histogram']))
-    ]
-    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
-
-    # Calculate Fibonacci levels
-    fib_levels = calculate_fibonacci_levels(fib_df)
-
-    # Plot figure with custom ratio and return it for further customization
+    # Plot figure with custom ratio
     fig, axlist = mpf.plot(
         renko_df,
         figratio=(10, 6),
@@ -149,26 +99,12 @@ def plot_renko(df, fib_df, symbol, title, brick_size_percent):
         ylabel="Price ($)",
         addplot=[
             mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
+            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-')
         ],
         returnfig=True
     )
 
     ax = axlist[0]
-
-    # Annotate Fibonacci levels
-    for level, price in fib_levels.items():
-        ax.axhline(price, color='yellow', linestyle='-', linewidth=2)
-        ax.annotate(f'{level}: {price:.2f}', xy=(1, price), xytext=(5, 0), textcoords='offset points',
-                    ha='left', va='center', color='black', fontsize=8, backgroundcolor='white')
-
-    # Adjust the y-axis limits to ensure at least two Fibonacci levels are visible
-    ylim = [min(fib_levels.values()) - (0.05 * (max(fib_levels.values()) - min(fib_levels.values()))),
-            max(fib_levels.values()) + (0.05 * (max(fib_levels.values()) - min(fib_levels.values())))]
-    ax.set_ylim(ylim)
-
-    # Add Title
     ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
 
     # Save plot to a BytesIO object
@@ -176,9 +112,7 @@ def plot_renko(df, fib_df, symbol, title, brick_size_percent):
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
 
-    # Close the figure to avoid memory overflow
     plt.close(fig)
-
     return buf
 
 # Function to send Telegram message and image
@@ -188,13 +122,6 @@ async def send_telegram_message(symbol, message, image_buffer):
         await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
         last_alert_messages[symbol] = message
 
-# Function to send Fibonacci levels in a separate message
-async def send_fibonacci_levels(symbol, fib_levels):
-    fib_message = f"Fibonacci Levels for {symbol}:\n"
-    for level, price in fib_levels.items():
-        fib_message += f"{level}: {price:.5f}\n"
-    await telegram_bot.send_message(chat_id=config.CHAT_ID, text=fib_message)
-
 # Main function
 async def main():
     while True:
@@ -202,47 +129,29 @@ async def main():
             try:
                 # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
-                fib_data = get_historical_data(symbol, fib_interval, limit=50)
 
-                # Calculate MACD to ensure columns are available
-                calculate_macd(historical_data)
+                # Convert to Renko bricks
+                renko_df = convert_to_renko(historical_data, brick_size_percent=1)
+
+                # Calculate EMAs on Renko bricks
+                renko_df['ema_short'] = calculate_ema(renko_df, 3)
+                renko_df['ema_long'] = calculate_ema(renko_df, 7)
 
                 # Check EMA crossovers
-                ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
-
-                # Check MACD histogram and short EMA values
-                histogram_cross_over = historical_data['histogram'].iloc[-2] > historical_data['histogram'].iloc[-3]
-                histogram_cross_under = historical_data['histogram'].iloc[-2] < historical_data['histogram'].iloc[-3]
-                short_ema_cross_over = historical_data['ema_short'].iloc[-2] > historical_data['ema_short'].iloc[-3]
-                short_ema_cross_under = historical_data['ema_short'].iloc[-2] < historical_data['ema_short'].iloc[-3]
+                cross_over = renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] <= renko_df['ema_long'].iloc[-3]
+                cross_under = renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] >= renko_df['ema_long'].iloc[-3]
 
                 # EMA cross events
-                if ema_cross_over:
-                    message = f'/enter_long {symbol}'
-                    title = f'EMA Cross Over for {symbol}'
-                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
-                    await send_telegram_message(symbol, message, image_buffer)
-                elif ema_cross_under:
-                    message = f'/enter_short {symbol}'
-                    title = f'EMA Cross Under for {symbol}'
-                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
-                    await send_telegram_message(symbol, message, image_buffer)
-
-                # MACD histogram and short EMA cross events
-                if histogram_cross_over and short_ema_cross_over:
+                if cross_over:
                     message = f'/alert_crossover {symbol}'
-                    title = f'MACD Histogram and Short EMA Cross Over for {symbol}'
-                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
+                    title = f'Short EMA Cross Over Long EMA for {symbol}'
+                    image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
-                elif histogram_cross_under and short_ema_cross_under:
+                elif cross_under:
                     message = f'/alert_crossdown {symbol}'
-                    title = f'MACD Histogram and Short EMA Cross Down for {symbol}'
-                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
+                    title = f'Short EMA Cross Down Long EMA for {symbol}'
+                    image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
-
-                # Send Fibonacci levels in a separate message
-                fib_levels = calculate_fibonacci_levels(fib_data)
-                await send_fibonacci_levels(symbol, fib_levels)
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
