@@ -36,7 +36,7 @@ binance = ccxt.binance({
 last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=50):
+def get_historical_data(symbol, interval, limit=100):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -69,7 +69,7 @@ def convert_to_renko(df, brick_size_percent):
                 last_brick_close = new_brick_close
 
     renko_df = pd.DataFrame(renko_data)
-    renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='T')
+    renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
     return renko_df
 
 # Function to calculate EMA using ta library
@@ -79,39 +79,23 @@ def calculate_ema(df, period):
 # Function to plot Renko bricks with EMA lines
 def plot_renko(df, symbol, title, brick_size_percent):
     renko_df = convert_to_renko(df, brick_size_percent)
-
-    # Create custom market colors for up and down Renko bricks
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-
-    # Add EMA lines to the plot
     short_ema = calculate_ema(renko_df, 3)
     long_ema = calculate_ema(renko_df, 7)
-
-    # Plot figure with custom ratio
     fig, axlist = mpf.plot(
-        renko_df,
-        figratio=(10, 6),
-        type="candle",
-        style=s,
-        tight_layout=True,
-        datetime_format='%H:%M',
-        ylabel="Price ($)",
+        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
+        datetime_format='%H:%M', ylabel="Price ($)",
         addplot=[
             mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
             mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-')
-        ],
-        returnfig=True
+        ], returnfig=True
     )
-
     ax = axlist[0]
     ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
-
-    # Save plot to a BytesIO object
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
-
     plt.close(fig)
     return buf
 
@@ -127,42 +111,26 @@ async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
-
-                # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=1)
-
-                # Calculate EMAs on Renko bricks
+                renko_df = convert_to_renko(historical_data, brick_size_percent=0.5)
                 renko_df['ema_short'] = calculate_ema(renko_df, 3)
                 renko_df['ema_long'] = calculate_ema(renko_df, 7)
-
-                # Check EMA crossovers
                 cross_over = renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] <= renko_df['ema_long'].iloc[-3]
                 cross_under = renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] >= renko_df['ema_long'].iloc[-3]
-
-                # EMA cross events
                 if cross_over:
-                    message = f'/alert_crossover {symbol}'
+                    message = f'crossover #{symbol}'
                     title = f'Short EMA Cross Over Long EMA for {symbol}'
                     image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
                 elif cross_under:
-                    message = f'/alert_crossdown {symbol}'
+                    message = f'crossdown #{symbol}'
                     title = f'Short EMA Cross Down Long EMA for {symbol}'
                     image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
-
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
+        await asyncio.sleep(900)
 
-        await asyncio.sleep(900)  # Sleep duration as needed
-
-# Initialize Telegram Bot
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
-
-# Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
-
-# Create and run the event loop
 asyncio.run(main())
