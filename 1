@@ -1,6 +1,3 @@
-Modify the codes alert conditions like if histogram and short ema values are greater than previous valve alert cross over and if lower than previous value alert crossdown and also send fiblevels values in separate message, ensure the values should be atleast 5 digits.
-
-
 import requests
 import ccxt
 import pandas as pd
@@ -191,6 +188,13 @@ async def send_telegram_message(symbol, message, image_buffer):
         await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
         last_alert_messages[symbol] = message
 
+# Function to send Fibonacci levels in a separate message
+async def send_fibonacci_levels(symbol, fib_levels):
+    fib_message = f"Fibonacci Levels for {symbol}:\n"
+    for level, price in fib_levels.items():
+        fib_message += f"{level}: {price:.5f}\n"
+    await telegram_bot.send_message(chat_id=config.CHAT_ID, text=fib_message)
+
 # Main function
 async def main():
     while True:
@@ -206,6 +210,12 @@ async def main():
                 # Check EMA crossovers
                 ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
 
+                # Check MACD histogram and short EMA values
+                histogram_cross_over = historical_data['histogram'].iloc[-2] > historical_data['histogram'].iloc[-3]
+                histogram_cross_under = historical_data['histogram'].iloc[-2] < historical_data['histogram'].iloc[-3]
+                short_ema_cross_over = historical_data['ema_short'].iloc[-2] > historical_data['ema_short'].iloc[-3]
+                short_ema_cross_under = historical_data['ema_short'].iloc[-2] < historical_data['ema_short'].iloc[-3]
+
                 # EMA cross events
                 if ema_cross_over:
                     message = f'/enter_long {symbol}'
@@ -217,6 +227,22 @@ async def main():
                     title = f'EMA Cross Under for {symbol}'
                     image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
                     await send_telegram_message(symbol, message, image_buffer)
+
+                # MACD histogram and short EMA cross events
+                if histogram_cross_over and short_ema_cross_over:
+                    message = f'/alert_crossover {symbol}'
+                    title = f'MACD Histogram and Short EMA Cross Over for {symbol}'
+                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
+                    await send_telegram_message(symbol, message, image_buffer)
+                elif histogram_cross_under and short_ema_cross_under:
+                    message = f'/alert_crossdown {symbol}'
+                    title = f'MACD Histogram and Short EMA Cross Down for {symbol}'
+                    image_buffer = plot_renko(historical_data, fib_data, symbol, title, brick_size_percent=1)  # 1% brick size
+                    await send_telegram_message(symbol, message, image_buffer)
+
+                # Send Fibonacci levels in a separate message
+                fib_levels = calculate_fibonacci_levels(fib_data)
+                await send_fibonacci_levels(symbol, fib_levels)
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
