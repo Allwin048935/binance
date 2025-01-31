@@ -1,0 +1,164 @@
+import requests
+import ccxt
+import pandas as pd
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+from io import BytesIO
+import asyncio
+import nest_asyncio
+from telegram import Bot
+import config  # Import the config module
+import ta  # Import ta library
+
+interval = '5m'  # 5-minute candlesticks
+
+# Fetch SELECTED_SYMBOLS dynamically from Binance
+url = "https://api.binance.com/api/v3/exchangeInfo"
+try:
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    SELECTED_SYMBOLS = [
+        s['symbol'] for s in data['symbols']
+        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
+    ]
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching data from Binance: {e}")
+    SELECTED_SYMBOLS = []
+
+# Initialize Binance client
+binance = ccxt.binance({
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
+})
+
+# Dictionary to store the last alert messages for each symbol
+last_alert_messages = {}
+
+# Function to get historical candlestick data
+def get_historical_data(symbol, interval, limit=1000):
+    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df
+
+# Function to convert 5-minute candles to Renko bricks using 2% brick size
+def convert_to_renko(df, brick_size_percent=1):
+    if len(df) < 3:
+        return pd.DataFrame()  # Not enough data
+
+    ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
+    brick_size = ref_close * (brick_size_percent / 100)  # 2% of [-2] close price
+    renko_data = []
+    last_brick_close = ref_close  # Start from this reference close price
+
+    for i in range(1, len(df)):
+        close = df['Close'].iloc[i]
+        diff = close - last_brick_close
+
+        if abs(diff) >= brick_size:
+            num_bricks = int(abs(diff) // brick_size)
+            direction = 1 if diff > 0 else -1
+
+            for _ in range(num_bricks):
+                new_brick_close = last_brick_close + (direction * brick_size)
+                renko_data.append({
+                    'Open': last_brick_close,
+                    'High': max(last_brick_close, new_brick_close),
+                    'Low': min(last_brick_close, new_brick_close),
+                    'Close': new_brick_close
+                })
+                last_brick_close = new_brick_close
+
+    renko_df = pd.DataFrame(renko_data)
+    if not renko_df.empty:
+        renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
+
+    return renko_df
+
+# Function to calculate EMA using ta library
+def calculate_ema(df, period):
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
+
+# Function to calculate MACD histogram
+def calculate_macd_histogram(df):
+    macd = ta.trend.MACD(df['Close'])
+    df['macd'] = macd.macd()
+    df['signal'] = macd.macd_signal()
+    df['histogram'] = macd.macd_diff()
+
+# Function to plot Renko bricks with EMA lines and MACD histogram
+def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
+    renko_df = convert_to_renko(df, brick_size_percent)
+    if renko_df.empty:
+        return None  # Return None if no Renko data is available
+
+    # Calculate EMA and MACD histogram for Renko bricks
+    renko_df['ema_short'] = calculate_ema(renko_df, 5)
+    renko_df['ema_long'] = calculate_ema(renko_df, 10)
+    calculate_macd_histogram(renko_df)
+
+    # Set dynamic colors for the MACD histogram
+    macd_colors = [
+        'green' if renko_df['histogram'].iloc[i] > renko_df['histogram'].iloc[i - 1] else 'red'
+        for i in range(1, len(renko_df['histogram']))
+    ]
+    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
+
+    # Plot Renko chart with EMA and MACD histogram
+    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
+    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+
+    fig, axlist = mpf.plot(
+        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
+        datetime_format='%H:%M', ylabel="Price ($)",
+        addplot=[
+            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
+        ], returnfig=True
+    )
+
+    ax = axlist[0]
+    ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+
+    return buf
+
+# Function to send Telegram message and image
+async def send_telegram_message(symbol, message, image_buffer):
+    if last_alert_messages.get(symbol) != message:
+        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
+        if image_buffer:
+            await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
+        last_alert_messages[symbol] = message
+
+# Main function
+async def main():
+    while True:
+        for symbol in SELECTED_SYMBOLS:
+            try:
+                historical_data = get_historical_data(symbol, interval)
+
+                # Plot Renko chart with EMA and MACD histogram
+                title = f'Renko Chart with EMA and MACD Histogram for {symbol}'
+                image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+
+                if image_buffer:
+                    message = f'Renko Chart Update for {symbol}'
+                    await send_telegram_message(symbol, message, image_buffer)
+
+            except Exception as e:
+                print(f"Error processing {symbol}: {e}")
+
+        await asyncio.sleep(300)  # Run every 5 minutes
+
+telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
+nest_asyncio.apply()
+asyncio.run(main())
