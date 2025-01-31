@@ -128,7 +128,7 @@ async def main():
             try:
                 historical_data = get_historical_data(symbol, interval)
                 
-                renko_df = convert_to_renko(historical_data, brick_size_percent=5)  # Use 2% brick size
+                renko_df = convert_to_renko(historical_data, brick_size_percent=2)  # Use 2% brick size
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
