@@ -45,7 +45,7 @@ def get_historical_data(symbol, interval, limit=1000):
     return df
 
 # Function to convert 5-minute candles to Renko bricks using 2% brick size
-def convert_to_renko(df, brick_size_percent=1):
+def convert_to_renko(df, brick_size_percent=0.5):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
@@ -147,7 +147,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=1)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=0.5)
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
@@ -159,23 +159,23 @@ async def main():
                 # Check alert conditions
                 crossover = (
                     renko_df['ema_short'].iloc[-2] > renko_df['ema_short'].iloc[-3] and
-                    renko_df['histogram'].iloc[-2] > renko_df['histogram'].iloc[-3]
+                    renko_df['histogram'].iloc[-2] > renko_df['histogram'].iloc[-3] and renko_df['histogram'].iloc[-3] < renko_df['histogram'].iloc[-4] 
                 )
                 crossdown = (
                     renko_df['ema_short'].iloc[-2] < renko_df['ema_short'].iloc[-3] and
-                    renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3]
+                    renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3] and renko_df['histogram'].iloc[-3] > renko_df['histogram'].iloc[-4] 
                 )
 
                 if crossover:
                     message = f'Crossover Alert for {symbol}'
                     title = f'Crossover Alert for {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.5)
                     await send_telegram_message(symbol, message, image_buffer)
 
                 elif crossdown:
                     message = f'Crossdown Alert for {symbol}'
                     title = f'Crossdown Alert for {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.5)
                     await send_telegram_message(symbol, message, image_buffer)
 
             except Exception as e:
