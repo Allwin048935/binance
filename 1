@@ -35,6 +35,7 @@ binance = ccxt.binance({
 # Dictionary to store the last alert messages for each symbol
 last_alert_messages = {}
 
+# Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=1000):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -43,23 +44,24 @@ def get_historical_data(symbol, interval, limit=1000):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
+# Function to convert 5-minute candles to Renko bricks using 2% brick size
 def convert_to_renko(df, brick_size_percent=1):
     if len(df) < 3:
-        return pd.DataFrame()
-    
-    ref_close = df['Close'].iloc[-2]
-    brick_size = ref_close * (brick_size_percent / 100)
+        return pd.DataFrame()  # Not enough data
+
+    ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
+    brick_size = ref_close * (brick_size_percent / 100)  # 2% of [-2] close price
     renko_data = []
-    last_brick_close = ref_close
-    
+    last_brick_close = ref_close  # Start from this reference close price
+
     for i in range(1, len(df)):
         close = df['Close'].iloc[i]
         diff = close - last_brick_close
-        
+
         if abs(diff) >= brick_size:
             num_bricks = int(abs(diff) // brick_size)
             direction = 1 if diff > 0 else -1
-            
+
             for _ in range(num_bricks):
                 new_brick_close = last_brick_close + (direction * brick_size)
                 renko_data.append({
@@ -73,42 +75,45 @@ def convert_to_renko(df, brick_size_percent=1):
     renko_df = pd.DataFrame(renko_data)
     if not renko_df.empty:
         renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
+
     return renko_df
 
-def calculate_macd(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['MACD'] = macd.macd()
-    df['MACD_Signal'] = macd.macd_signal()
-    df['MACD_Histogram'] = macd.macd_diff()
-    return df
+# Function to calculate EMA using ta library
+def calculate_ema(df, period):
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
+# Function to plot Renko bricks with EMA lines
 def plot_renko(df, symbol, title, brick_size_percent):
     renko_df = convert_to_renko(df, brick_size_percent)
     if renko_df.empty:
-        return None
-    
-    renko_df = calculate_macd(renko_df)
+        return None  # Return None if no Renko data is available
+
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style='dark_background', marketcolors=mc, y_on_right=True)
+    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
     
-    fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 6))
+    short_ema = calculate_ema(renko_df, 5)
+    long_ema = calculate_ema(renko_df, 10)
     
-    mpf.plot(
-        renko_df, type='candle', style=s, ax=axes[0], tight_layout=True
+    fig, axlist = mpf.plot(
+        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
+        datetime_format='%H:%M', ylabel="Price ($)",
+        addplot=[
+            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-')
+        ], returnfig=True
     )
-    axes[0].set_title(f"{symbol} - {title}", fontsize=15)
     
-    axes[1].bar(renko_df.index, renko_df['MACD_Histogram'], color=[
-        'green' if v >= 0 else 'red' for v in renko_df['MACD_Histogram']
-    ], alpha=0.6)
-    axes[1].set_title("MACD Histogram")
+    ax = axlist[0]
+    ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
     
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
+    
     return buf
 
+# Function to send Telegram message and image
 async def send_telegram_message(symbol, message, image_buffer):
     if last_alert_messages.get(symbol) != message:
         await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
@@ -116,32 +121,45 @@ async def send_telegram_message(symbol, message, image_buffer):
             await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
         last_alert_messages[symbol] = message
 
+# Main function
 async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
                 historical_data = get_historical_data(symbol, interval)
-                renko_df = convert_to_renko(historical_data, brick_size_percent=2)
+                
+                renko_df = convert_to_renko(historical_data, brick_size_percent=5)  # Use 2% brick size
                 if renko_df.empty:
-                    continue
+                    continue  # Skip if no Renko bricks are generated
 
-                renko_df['ema_short'] = ta.trend.EMAIndicator(renko_df['Close'], window=3).ema_indicator()
-                renko_df['ema_long'] = ta.trend.EMAIndicator(renko_df['Close'], window=7).ema_indicator()
+                renko_df['ema_short'] = calculate_ema(renko_df, 3)
+                renko_df['ema_long'] = calculate_ema(renko_df, 7)
 
-                cross_over = renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] <= renko_df['ema_long'].iloc[-3]
-                cross_under = renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] >= renko_df['ema_long'].iloc[-3]
+                cross_over = (
+                    renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and 
+                    renko_df['ema_short'].iloc[-3] <= renko_df['ema_long'].iloc[-3]
+                )
+                cross_under = (
+                    renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and 
+                    renko_df['ema_short'].iloc[-3] >= renko_df['ema_long'].iloc[-3]
+                )
 
                 if cross_over:
                     message = f'Crossover #{symbol}'
-                    image_buffer = plot_renko(historical_data, symbol, "Short EMA Cross Over Long EMA", brick_size_percent=2)
+                    title = f'Short EMA Cross Over Long EMA for {symbol}'
+                    image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=2)
                     await send_telegram_message(symbol, message, image_buffer)
+
                 elif cross_under:
                     message = f'Crossdown #{symbol}'
-                    image_buffer = plot_renko(historical_data, symbol, "Short EMA Cross Down Long EMA", brick_size_percent=2)
+                    title = f'Short EMA Cross Down Long EMA for {symbol}'
+                    image_buffer = plot_renko(historical_data, symbol, title, brick_size_percent=2)
                     await send_telegram_message(symbol, message, image_buffer)
+
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
-        await asyncio.sleep(300)
+
+        await asyncio.sleep(300)  # Run every 15 minutes
 
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
 nest_asyncio.apply()
