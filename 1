@@ -45,7 +45,7 @@ def get_historical_data(symbol, interval, limit=1000):
     return df
 
 # Function to convert 5-minute candles to Renko bricks using 2% brick size
-def convert_to_renko(df, brick_size_percent=1):
+def convert_to_renko(df, brick_size_percent=2):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
@@ -91,8 +91,8 @@ def plot_renko(df, symbol, title, brick_size_percent):
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
     
-    short_ema = calculate_ema(renko_df, 5)
-    long_ema = calculate_ema(renko_df, 10)
+    short_ema = calculate_ema(renko_df, 3)
+    long_ema = calculate_ema(renko_df, 7)
     
     fig, axlist = mpf.plot(
         renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
