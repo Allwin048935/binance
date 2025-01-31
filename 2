@@ -7,7 +7,8 @@ from io import BytesIO
 import asyncio
 import nest_asyncio
 from telegram import Bot
-import config  # Import the config module
+import config
+import config1  # Import the config module
 import ta  # Import ta library
 from datetime import datetime
 
@@ -136,24 +137,24 @@ def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
 async def send_3commas_payload(symbol, action, close_price, timestamp):
     payloads = [
         {
-            "secret": config.SECRET_1,
+            "secret": config1.SECRET_1,
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "Bitget",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
-            "bot_uuid": config.BOT_UUID_1,
+            "bot_uuid": config1.BOT_UUID_1,
         },
         {
-            "secret": config.SECRET_2,
+            "secret": config1.SECRET_2,
             "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "Bitget",
             "tv_instrument": symbol.replace('/', '') + '.P',
             "action": action,
-            "bot_uuid": config.BOT_UUID_2,
+            "bot_uuid": config1.BOT_UUID_2,
         }
     ]
 
@@ -202,18 +203,18 @@ async def main():
                 )
 
                 if crossover:
-                    message = f'Crossover Alert for {symbol}'
-                    title = f'Crossover Alert for {symbol}'
+                    message = f'Crossover #{symbol}'
+                    title = f'Crossover {symbol}'
                     image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
-                    await send_3commas_payload(symbol, "buy", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
+                    await send_3commas_payload(symbol, "enter_long", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
                 elif crossdown:
-                    message = f'Crossdown Alert for {symbol}'
-                    title = f'Crossdown Alert for {symbol}'
+                    message = f'Crossdown #{symbol}'
+                    title = f'Crossdown {symbol}'
                     image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
-                    await send_3commas_payload(symbol, "sell", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
+                    await send_3commas_payload(symbol, "enter_short", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
