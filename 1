@@ -32,6 +32,7 @@ binance = ccxt.binance({
     'secret': config.API_SECRET,
 })
 
+# Dictionary to store the last alert messages for each symbol
 last_alert_messages = {}
 
 def get_historical_data(symbol, interval, limit=1000):
@@ -50,62 +51,62 @@ def convert_to_renko(df, brick_size_percent=1):
     brick_size = ref_close * (brick_size_percent / 100)
     renko_data = []
     last_brick_close = ref_close
-
+    
     for i in range(1, len(df)):
         close = df['Close'].iloc[i]
         diff = close - last_brick_close
+        
         if abs(diff) >= brick_size:
             num_bricks = int(abs(diff) // brick_size)
             direction = 1 if diff > 0 else -1
+            
             for _ in range(num_bricks):
                 new_brick_close = last_brick_close + (direction * brick_size)
-                renko_data.append({'Open': last_brick_close, 'High': max(last_brick_close, new_brick_close),
-                                   'Low': min(last_brick_close, new_brick_close), 'Close': new_brick_close})
+                renko_data.append({
+                    'Open': last_brick_close,
+                    'High': max(last_brick_close, new_brick_close),
+                    'Low': min(last_brick_close, new_brick_close),
+                    'Close': new_brick_close
+                })
                 last_brick_close = new_brick_close
+
     renko_df = pd.DataFrame(renko_data)
     if not renko_df.empty:
         renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
     return renko_df
 
-def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
-
 def calculate_macd(df):
-    macd = ta.trend.MACD(df['Close'], window_slow=26, window_fast=12, window_sign=9)
-    return macd.macd(), macd.macd_signal(), macd.macd_diff()
+    macd = ta.trend.MACD(df['Close'])
+    df['MACD'] = macd.macd()
+    df['MACD_Signal'] = macd.macd_signal()
+    df['MACD_Histogram'] = macd.macd_diff()
+    return df
 
-def plot_renko_macd(df, symbol, title, brick_size_percent):
+def plot_renko(df, symbol, title, brick_size_percent):
     renko_df = convert_to_renko(df, brick_size_percent)
     if renko_df.empty:
         return None
     
-    short_ema = calculate_ema(renko_df, 5)
-    long_ema = calculate_ema(renko_df, 10)
-    macd, signal, hist = calculate_macd(renko_df)
-    
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1]})
-    
+    renko_df = calculate_macd(renko_df)
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+    s = mpf.make_mpf_style(base_mpl_style='dark_background', marketcolors=mc, y_on_right=True)
+    
+    fig, axes = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 6))
     
     mpf.plot(
-        renko_df, type="candle", ax=axes[0], style=s, datetime_format='%H:%M', ylabel="Price ($)",
-        addplot=[
-            mpf.make_addplot(short_ema, ax=axes[0], color='cyan', width=1.5),
-            mpf.make_addplot(long_ema, ax=axes[0], color='magenta', width=1.5)
-        ]
+        renko_df, type='candle', style=s, ax=axes[0], tight_layout=True
     )
-    axes[0].set_title(f"{symbol} - {title}", fontsize=20, style='italic', fontfamily='sans-serif')
+    axes[0].set_title(f"{symbol} - {title}", fontsize=15)
     
-    axes[1].bar(renko_df.index, hist, color=['green' if x >= 0 else 'red' for x in hist], width=0.5)
+    axes[1].bar(renko_df.index, renko_df['MACD_Histogram'], color=[
+        'green' if v >= 0 else 'red' for v in renko_df['MACD_Histogram']
+    ], alpha=0.6)
     axes[1].set_title("MACD Histogram")
-    axes[1].axhline(0, color='white', linewidth=1)
     
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
-    
     return buf
 
 async def send_telegram_message(symbol, message, image_buffer):
@@ -120,25 +121,28 @@ async def main():
         for symbol in SELECTED_SYMBOLS:
             try:
                 historical_data = get_historical_data(symbol, interval)
-                renko_df = convert_to_renko(historical_data, brick_size_percent=5)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=2)
                 if renko_df.empty:
                     continue
-                renko_df['ema_short'] = calculate_ema(renko_df, 3)
-                renko_df['ema_long'] = calculate_ema(renko_df, 7)
+
+                renko_df['ema_short'] = ta.trend.EMAIndicator(renko_df['Close'], window=3).ema_indicator()
+                renko_df['ema_long'] = ta.trend.EMAIndicator(renko_df['Close'], window=7).ema_indicator()
+
                 cross_over = renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] <= renko_df['ema_long'].iloc[-3]
                 cross_under = renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] >= renko_df['ema_long'].iloc[-3]
+
                 if cross_over:
                     message = f'Crossover #{symbol}'
-                    image_buffer = plot_renko_macd(historical_data, symbol, 'EMA Crossover', brick_size_percent=2)
+                    image_buffer = plot_renko(historical_data, symbol, "Short EMA Cross Over Long EMA", brick_size_percent=2)
                     await send_telegram_message(symbol, message, image_buffer)
                 elif cross_under:
                     message = f'Crossdown #{symbol}'
-                    image_buffer = plot_renko_macd(historical_data, symbol, 'EMA Crossdown', brick_size_percent=2)
+                    image_buffer = plot_renko(historical_data, symbol, "Short EMA Cross Down Long EMA", brick_size_percent=2)
                     await send_telegram_message(symbol, message, image_buffer)
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
         await asyncio.sleep(300)
 
-iOS.apply()
 telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
+nest_asyncio.apply()
 asyncio.run(main())
