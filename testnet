@@ -82,11 +82,15 @@ def calculate_quantity(symbol, price):
     try:
         # Fetch the minimum quantity precision for the symbol
         markets = exchange.load_markets()
+        if symbol not in markets:
+            print(f"Symbol {symbol} not found in market data.")
+            return None
+
         market = markets[symbol]
         precision = market['precision']['amount']
         
         # Calculate quantity for $10 USD
-        quantity = 100 / price
+        quantity = 10 / price  # Adjusted to $10 USD
         quantity = round(quantity, precision)  # Round to the required precision
         return quantity
     except Exception as e:
@@ -113,7 +117,7 @@ async def place_order(symbol, side, price):
         )
         print(f"Order placed: {order}")
     except Exception as e:
-        print(f"Error placing order: {e}")
+        print(f"Error placing order for {symbol}: {e}")
 
 # Main function
 async def main():
@@ -142,9 +146,11 @@ async def main():
                 )
 
                 if crossover:
+                    print(f"Crossover detected for {symbol}")
                     await place_order(symbol, 'buy', renko_df['Close'].iloc[-1])
 
                 elif crossdown:
+                    print(f"Crossdown detected for {symbol}")
                     await place_order(symbol, 'sell', renko_df['Close'].iloc[-1])
 
             except Exception as e:
