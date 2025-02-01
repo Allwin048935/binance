@@ -99,7 +99,7 @@ def calculate_macd_histogram(df):
 
 # Function to plot Renko bricks with EMA lines and MACD histogram
 def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
-    renko_df = convert_to_renko(df, brick_size_percent, pivot_brick_percent=3)  # Use 3% pivot brick size
+    renko_df = convert_to_renko(df, brick_size_percent, pivot_brick_percent=1.5)  # Use 3% pivot brick size
     if renko_df.empty:
         return None  # Return None if no Renko data is available
 
@@ -189,7 +189,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=1, pivot_brick_percent=3)  # Use 3% pivot brick size
+                renko_df = convert_to_renko(historical_data, brick_size_percent=0.5, pivot_brick_percent=1.5)  # Use 3% pivot brick size
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
@@ -215,14 +215,14 @@ async def main():
                 if crossover:
                     message = f'Crossover #{symbol}'
                     title = f'Crossover {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.5)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_long", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
                 elif crossdown:
                     message = f'Crossdown #{symbol}'
                     title = f'Crossdown {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.5)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_short", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
