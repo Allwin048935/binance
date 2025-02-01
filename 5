@@ -1,0 +1,15 @@
+import ccxt
+print('CCXT version:', ccxt.__version__)
+
+exchange = ccxt.binance({
+    'apiKey': '7cd27ce6b7dfb9f453e87aaf006f2158d7ad142314ed746659a5a1cd788f5ad8',
+    'secret': '3326cb1c97da66a451128e8745c7dcba74edfb2499a6f6424021cb7f322b03a1',
+    'options': {
+        'defaultType': 'future'  # ←------------- defaultType inside options
+    },
+    'enableRateLimit': True,  # required by the Manual
+})
+
+exchange.set_sandbox_mode(True)  # ←-------------- add this to switch to the sandbox/testnet
+
+print(exchange.fetch_balance())
