@@ -194,12 +194,7 @@ async def main():
 
                 # Check alert conditions
                 crossover = renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] < renko_df['ema_long'].iloc[-3]
-                crossdown = (
-                    renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and
-                    renko_df['ema_short'].iloc[-3] > renko_df['ema_short'].iloc[-4] and
-                    renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3] and
-                    renko_df['histogram'].iloc[-3] > renko_df['histogram'].iloc[-4]
-                )
+                crossdown = renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and renko_df['ema_short'].iloc[-3] > renko_df['ema_long'].iloc[-3]
 
                 if crossover:
                     message = f'Crossover #{symbol}'
