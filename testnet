@@ -1,42 +1,68 @@
+import requests
 import ccxt
 import pandas as pd
-import ta  # Import ta library
+import matplotlib.pyplot as plt
+import mplfinance as mpf
+from io import BytesIO
 import asyncio
+import nest_asyncio
+from telegram import Bot
+import config
+import ta  # Import ta library
 from datetime import datetime
 
-# Initialize Binance Futures Testnet client
+interval = '15m'  # 5-minute candlesticks
+
+# Fetch SELECTED_SYMBOLS dynamically from Binance
+url = "https://api.binance.com/api/v3/exchangeInfo"
+try:
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    SELECTED_SYMBOLS = [
+        s['symbol'] for s in data['symbols']
+        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
+    ]
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching data from Binance: {e}")
+    SELECTED_SYMBOLS = []
+
+# Initialize Binance client for Futures Testnet
 exchange = ccxt.binance({
     'apiKey': '7cd27ce6b7dfb9f453e87aaf006f2158d7ad142314ed746659a5a1cd788f5ad8',
     'secret': '3326cb1c97da66a451128e8745c7dcba74edfb2499a6f6424021cb7f322b03a1',
     'options': {
-        'defaultType': 'future',  # Set default type to futures
+        'defaultType': 'future'  # ←------------- defaultType inside options
     },
-    'enableRateLimit': True,  # Enable rate limiting
+    'enableRateLimit': True,  # required by the Manual
 })
 
-# Switch to Binance Futures Testnet (sandbox mode)
-exchange.set_sandbox_mode(True)
+exchange.set_sandbox_mode(True)  # ←-------------- add this to switch to the sandbox/testnet
+
+# Dictionary to store the last alert messages for each symbol
+last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+def get_historical_data(symbol, interval, limit=1000):
     ohlcv = exchange.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to convert candlestick data to Renko bricks
+# Function to convert 5-minute candles to Renko bricks using 2% brick size
 def convert_to_renko(df, brick_size_percent=2.5):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
-    ref_close = df['close'].iloc[-2]  # Use the close price of the second-to-last candle
-    brick_size = ref_close * (brick_size_percent / 100)  # Calculate brick size
+    ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
+    brick_size = ref_close * (brick_size_percent / 100)  # 2% of [-2] close price
     renko_data = []
-    last_brick_close = ref_close  # Start from the reference close price
+    last_brick_close = ref_close  # Start from this reference close price
 
     for i in range(1, len(df)):
-        close = df['close'].iloc[i]
+        close = df['Close'].iloc[i]
         diff = close - last_brick_close
 
         if abs(diff) >= brick_size:
@@ -46,10 +72,10 @@ def convert_to_renko(df, brick_size_percent=2.5):
             for _ in range(num_bricks):
                 new_brick_close = last_brick_close + (direction * brick_size)
                 renko_data.append({
-                    'open': last_brick_close,
-                    'high': max(last_brick_close, new_brick_close),
-                    'low': min(last_brick_close, new_brick_close),
-                    'close': new_brick_close
+                    'Open': last_brick_close,
+                    'High': max(last_brick_close, new_brick_close),
+                    'Low': min(last_brick_close, new_brick_close),
+                    'Close': new_brick_close
                 })
                 last_brick_close = new_brick_close
 
@@ -59,74 +85,151 @@ def convert_to_renko(df, brick_size_percent=2.5):
 
     return renko_df
 
-# Function to calculate EMA
+# Function to calculate EMA using ta library
 def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['close'], window=period).ema_indicator()
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 # Function to calculate MACD histogram
 def calculate_macd_histogram(df):
-    macd = ta.trend.MACD(df['close'])
+    macd = ta.trend.MACD(df['Close'])
     df['macd'] = macd.macd()
     df['signal'] = macd.macd_signal()
     df['histogram'] = macd.macd_diff()
 
-# Function to place order on Binance Futures Testnet
-async def place_order(symbol, side, quantity):
+# Function to plot Renko bricks with EMA lines and MACD histogram
+def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
+    renko_df = convert_to_renko(df, brick_size_percent)
+    if renko_df.empty:
+        return None  # Return None if no Renko data is available
+
+    # Calculate EMA and MACD histogram for Renko bricks
+    renko_df['ema_short'] = calculate_ema(renko_df, 4)
+    renko_df['ema_long'] = calculate_ema(renko_df, 10)
+    calculate_macd_histogram(renko_df)
+
+    # Set dynamic colors for the MACD histogram
+    macd_colors = [
+        'green' if renko_df['histogram'].iloc[i] > renko_df['histogram'].iloc[i - 1] else 'red'
+        for i in range(1, len(renko_df['histogram']))
+    ]
+    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
+
+    # Plot Renko chart with EMA and MACD histogram
+    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
+    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+
+    fig, axlist = mpf.plot(
+        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
+        datetime_format='%H:%M', ylabel="Price ($)",
+        addplot=[
+            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
+        ], returnfig=True
+    )
+
+    ax = axlist[0]
+    ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+
+    return buf
+
+# Function to calculate quantity for $10 USD worth of the asset
+def calculate_quantity(symbol, price):
     try:
-        order = exchange.create_market_order(symbol, side, quantity)
+        # Fetch the minimum quantity precision for the symbol
+        markets = exchange.load_markets()
+        market = markets[symbol]
+        precision = market['precision']['amount']
+        
+        # Calculate quantity for $10 USD
+        quantity = 100 / price
+        quantity = round(quantity, precision)  # Round to the required precision
+        return quantity
+    except Exception as e:
+        print(f"Error calculating quantity for {symbol}: {e}")
+        return None
+
+# Function to place order on Binance Futures Testnet
+async def place_order(symbol, side, price):
+    try:
+        # Calculate quantity for $10 USD
+        quantity = calculate_quantity(symbol, price)
+        if quantity is None:
+            print(f"Failed to calculate quantity for {symbol}")
+            return
+
+        # Place the order
+        order = exchange.create_order(
+            symbol=symbol,
+            type='limit',
+            side=side,
+            amount=quantity,
+            price=price,
+            params={'test': True}  # Test mode for Binance Futures Testnet
+        )
         print(f"Order placed: {order}")
     except Exception as e:
         print(f"Error placing order: {e}")
 
+# Function to send Telegram message and image
+async def send_telegram_message(symbol, message, image_buffer):
+    if last_alert_messages.get(symbol) != message:
+        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
+        if image_buffer:
+            await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
+        last_alert_messages[symbol] = message
+
 # Main function
 async def main():
-    symbol = 'XRP/USDT'  # Example symbol
-    interval = '5m'  # 15-minute candlesticks
-    brick_size_percent = 0.25# Renko brick size (2.5% of price)
-
     while True:
-        try:
-            # Fetch historical data
-            df = get_historical_data(symbol, interval)
+        for symbol in SELECTED_SYMBOLS:
+            try:
+                historical_data = get_historical_data(symbol, interval)
 
-            # Convert to Renko bricks
-            renko_df = convert_to_renko(df, brick_size_percent)
-            if renko_df.empty:
-                print("Not enough data to generate Renko bricks.")
-                await asyncio.sleep(300)
-                continue
+                # Convert to Renko bricks
+                renko_df = convert_to_renko(historical_data, brick_size_percent=2.5)
+                if renko_df.empty:
+                    continue  # Skip if no Renko bricks are generated
 
-            # Calculate EMA and MACD histogram
-            renko_df['ema_short'] = calculate_ema(renko_df, 5)
-            renko_df['ema_long'] = calculate_ema(renko_df, 10)
-            calculate_macd_histogram(renko_df)
+                # Calculate EMA and MACD histogram
+                renko_df['ema_short'] = calculate_ema(renko_df, 4)
+                renko_df['ema_long'] = calculate_ema(renko_df, 10)
+                calculate_macd_histogram(renko_df)
 
-            # Check for crossover or crossdown
-            crossover = (
-                renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2]
-            )
-            crossdown = (
-                renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2]
-            )
+                # Check alert conditions
+                crossover = (
+                    renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and
+                    renko_df['ema_short'].iloc[-3] < renko_df['ema_long'].iloc[-3]
+                )
+                crossdown = (
+                    renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and
+                    renko_df['ema_short'].iloc[-3] > renko_df['ema_long'].iloc[-3]
+                )
 
-            # Fetch current price to calculate quantity
-            ticker = exchange.fetch_ticker(symbol)
-            current_price = ticker['last']
-            quantity = 100 / current_price  # Fixed $15 USD value
+                if crossover:
+                    message = f'Crossover #{symbol}'
+                    title = f'Crossover {symbol}'
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    await send_telegram_message(symbol, message, image_buffer)
+                    await place_order(symbol, 'buy', renko_df['Close'].iloc[-1])
 
-            # Place orders based on conditions
-            if crossover:
-                print("Crossover detected! Placing buy order...")
-                await place_order(symbol, 'buy', quantity)
+                elif crossdown:
+                    message = f'Crossdown #{symbol}'
+                    title = f'Crossdown {symbol}'
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    await send_telegram_message(symbol, message, image_buffer)
+                    await place_order(symbol, 'sell', renko_df['Close'].iloc[-1])
 
-            elif crossdown:
-                print("Crossdown detected! Placing sell order...")
-                await place_order(symbol, 'sell', quantity)
+            except Exception as e:
+                print(f"Error processing {symbol}: {e}")
 
-        except Exception as e:
-            print(f"Error: {e}")
+        await asyncio.sleep(300)  # Run every 5 minutes
 
-        await asyncio.sleep(60)  # Run every 5 minutes
-
-# Run the main function
+telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
+nest_asyncio.apply()
 asyncio.run(main())
