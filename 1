@@ -197,7 +197,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=1, pivot_brick_percent=1.5)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=0.5, pivot_brick_percent=1.5)
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
