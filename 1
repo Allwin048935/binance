@@ -107,7 +107,7 @@ def calculate_macd_histogram(df):
 
 # Function to plot Renko bricks with EMA lines and MACD histogram
 def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
-    renko_df = convert_to_renko(df, brick_size_percent, pivot_brick_percent=3)  # Use 3% pivot brick size
+    renko_df = convert_to_renko(df, brick_size_percent, pivot_brick_percent=1.5)  # Use 3% pivot brick size
     if renko_df.empty:
         return None  # Return None if no Renko data is available
 
