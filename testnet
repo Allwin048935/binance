@@ -1,17 +1,7 @@
-import requests
 import ccxt
 import pandas as pd
-import matplotlib.pyplot as plt
-import mplfinance as mpf
-from io import BytesIO
-import asyncio
-import nest_asyncio
-from telegram import Bot
-import config
 import ta  # Import ta library
-from datetime import datetime
-
-interval = '5m'  # 5-minute candlesticks
+import asyncio
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -38,9 +28,6 @@ exchange = ccxt.binance({
 })
 
 exchange.set_sandbox_mode(True)  # ←-------------- add this to switch to the sandbox/testnet
-
-# Dictionary to store the last alert messages for each symbol
-last_alert_messages = {}
 
 # Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=500):
@@ -89,55 +76,6 @@ def convert_to_renko(df, brick_size_percent=1):
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to calculate MACD histogram
-def calculate_macd_histogram(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['macd'] = macd.macd()
-    df['signal'] = macd.macd_signal()
-    df['histogram'] = macd.macd_diff()
-
-# Function to plot Renko bricks with EMA lines and MACD histogram
-def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
-    renko_df = convert_to_renko(df, brick_size_percent)
-    if renko_df.empty:
-        return None  # Return None if no Renko data is available
-
-    # Calculate EMA and MACD histogram for Renko bricks
-    renko_df['ema_short'] = calculate_ema(renko_df, 4)
-    renko_df['ema_long'] = calculate_ema(renko_df, 10)
-    calculate_macd_histogram(renko_df)
-
-    # Set dynamic colors for the MACD histogram
-    macd_colors = [
-        'green' if renko_df['histogram'].iloc[i] > renko_df['histogram'].iloc[i - 1] else 'red'
-        for i in range(1, len(renko_df['histogram']))
-    ]
-    macd_colors.insert(0, 'gray')  # Add a neutral color for the first bar
-
-    # Plot Renko chart with EMA and MACD histogram
-    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-
-    fig, axlist = mpf.plot(
-        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
-        datetime_format='%H:%M', ylabel="Price ($)",
-        addplot=[
-            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
-        ], returnfig=True
-    )
-
-    ax = axlist[0]
-    ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
-
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    plt.close(fig)
-
-    return buf
-
 # Function to calculate quantity for $10 USD worth of the asset
 def calculate_quantity(symbol, price):
     try:
@@ -176,14 +114,6 @@ async def place_order(symbol, side, price):
     except Exception as e:
         print(f"Error placing order: {e}")
 
-# Function to send Telegram message and image
-async def send_telegram_message(symbol, message, image_buffer):
-    if last_alert_messages.get(symbol) != message:
-        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
-        if image_buffer:
-            await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
-        last_alert_messages[symbol] = message
-
 # Main function
 async def main():
     while True:
@@ -196,10 +126,9 @@ async def main():
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
-                # Calculate EMA and MACD histogram
+                # Calculate EMA
                 renko_df['ema_short'] = calculate_ema(renko_df, 4)
                 renko_df['ema_long'] = calculate_ema(renko_df, 10)
-                calculate_macd_histogram(renko_df)
 
                 # Check alert conditions
                 crossover = (
@@ -212,17 +141,9 @@ async def main():
                 )
 
                 if crossover:
-                    message = f'Crossover #{symbol}'
-                    title = f'Crossover {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
-                    await send_telegram_message(symbol, message, image_buffer)
                     await place_order(symbol, 'buy', renko_df['Close'].iloc[-1])
 
                 elif crossdown:
-                    message = f'Crossdown #{symbol}'
-                    title = f'Crossdown {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
-                    await send_telegram_message(symbol, message, image_buffer)
                     await place_order(symbol, 'sell', renko_df['Close'].iloc[-1])
 
             except Exception as e:
@@ -230,6 +151,4 @@ async def main():
 
         await asyncio.sleep(300)  # Run every 5 minutes
 
-telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
-nest_asyncio.apply()
 asyncio.run(main())
