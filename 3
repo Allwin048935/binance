@@ -1,0 +1,23 @@
+import ccxt
+import config
+
+binance = ccxt.binance({
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
+    'options': {
+        'defaultType': 'future',
+    },
+    'urls': {
+        'api': {
+            'public': 'https://testnet.binancefuture.com/fapi/v1',
+            'private': 'https://testnet.binancefuture.com/fapi/v1',
+        },
+    },
+})
+
+try:
+    # Fetch account balance to test the API key
+    balance = binance.fetch_balance()
+    print("Balance:", balance)
+except Exception as e:
+    print("Error:", e)
