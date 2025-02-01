@@ -47,7 +47,7 @@ def get_historical_data(symbol, interval, limit=1000):
     return df
 
 # Function to convert 5-minute candles to Renko bricks using 2% brick size
-def convert_to_renko(df, brick_size_percent=1):
+def convert_to_renko(df, brick_size_percent=0.75):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
@@ -98,8 +98,8 @@ def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
         return None  # Return None if no Renko data is available
 
     # Calculate EMA and MACD histogram for Renko bricks
-    renko_df['ema_short'] = calculate_ema(renko_df, 4)
-    renko_df['ema_long'] = calculate_ema(renko_df, 14)
+    renko_df['ema_short'] = calculate_ema(renko_df, 3)
+    renko_df['ema_long'] = calculate_ema(renko_df, 10)
     calculate_macd_histogram(renko_df)
 
     # Set dynamic colors for the MACD histogram
@@ -183,13 +183,13 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=1)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=0.75)
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
                 # Calculate EMA and MACD histogram
-                renko_df['ema_short'] = calculate_ema(renko_df, 4)
-                renko_df['ema_long'] = calculate_ema(renko_df, 14)
+                renko_df['ema_short'] = calculate_ema(renko_df, 3)
+                renko_df['ema_long'] = calculate_ema(renko_df, 10)
                 calculate_macd_histogram(renko_df)
 
                 # Check alert conditions
@@ -209,14 +209,14 @@ async def main():
                 if crossover:
                     message = f'Crossover #{symbol}'
                     title = f'Crossover {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.75)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_long", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
                 elif crossdown:
                     message = f'Crossdown #{symbol}'
                     title = f'Crossdown {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=0.75)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_short", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
