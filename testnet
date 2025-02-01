@@ -103,12 +103,10 @@ async def main():
 
             # Check for crossover or crossdown
             crossover = (
-                renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and
-                renko_df['ema_short'].iloc[-3] < renko_df['ema_long'].iloc[-3]
+                renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2]
             )
             crossdown = (
-                renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and
-                renko_df['ema_short'].iloc[-3] > renko_df['ema_long'].iloc[-3]
+                renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2]
             )
 
             # Fetch current price to calculate quantity
