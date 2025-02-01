@@ -12,7 +12,7 @@ import config1  # Import the config module
 import ta  # Import ta library
 from datetime import datetime
 
-interval = '15m'  # 5-minute candlesticks
+interval = '5m'  # 5-minute candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -46,23 +46,29 @@ def get_historical_data(symbol, interval, limit=1000):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to convert 5-minute candles to Renko bricks using 2% brick size
-def convert_to_renko(df, brick_size_percent=2.5):
+# Function to convert 5-minute candles to Renko bricks using 1% brick size and 3% pivot brick size
+def convert_to_renko(df, brick_size_percent=1, pivot_brick_percent=3):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
     ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
-    brick_size = ref_close * (brick_size_percent / 100)  # 2% of [-2] close price
+    brick_size = ref_close * (brick_size_percent / 100)  # 1% of [-2] close price
+    pivot_brick_size = ref_close * (pivot_brick_percent / 100)  # 3% of [-2] close price for direction change
     renko_data = []
     last_brick_close = ref_close  # Start from this reference close price
+    direction = 1  # 1 for upward, -1 for downward
 
     for i in range(1, len(df)):
         close = df['Close'].iloc[i]
         diff = close - last_brick_close
 
+        # Check if the price movement is sufficient to change direction
+        if abs(diff) >= pivot_brick_size:
+            direction = 1 if diff > 0 else -1  # Update direction based on 3% pivot brick size
+
+        # Generate Renko bricks based on the brick size
         if abs(diff) >= brick_size:
             num_bricks = int(abs(diff) // brick_size)
-            direction = 1 if diff > 0 else -1
 
             for _ in range(num_bricks):
                 new_brick_close = last_brick_close + (direction * brick_size)
@@ -93,13 +99,13 @@ def calculate_macd_histogram(df):
 
 # Function to plot Renko bricks with EMA lines and MACD histogram
 def plot_renko_with_ema_and_histogram(df, symbol, title, brick_size_percent):
-    renko_df = convert_to_renko(df, brick_size_percent)
+    renko_df = convert_to_renko(df, brick_size_percent, pivot_brick_percent=3)  # Use 3% pivot brick size
     if renko_df.empty:
         return None  # Return None if no Renko data is available
 
     # Calculate EMA and MACD histogram for Renko bricks
     renko_df['ema_short'] = calculate_ema(renko_df, 4)
-    renko_df['ema_long'] = calculate_ema(renko_df, 10)
+    renko_df['ema_long'] = calculate_ema(renko_df, 14)
     calculate_macd_histogram(renko_df)
 
     # Set dynamic colors for the MACD histogram
@@ -183,36 +189,40 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=2.5)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=1, pivot_brick_percent=3)  # Use 3% pivot brick size
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
                 # Calculate EMA and MACD histogram
                 renko_df['ema_short'] = calculate_ema(renko_df, 4)
-                renko_df['ema_long'] = calculate_ema(renko_df, 10)
+                renko_df['ema_long'] = calculate_ema(renko_df, 14)
                 calculate_macd_histogram(renko_df)
 
                 # Check alert conditions
                 crossover = (
-                    renko_df['ema_short'].iloc[-2] > renko_df['ema_long'].iloc[-2] and
-                    renko_df['ema_short'].iloc[-3] < renko_df['ema_long'].iloc[-3]
+                    renko_df['ema_short'].iloc[-2] > renko_df['ema_short'].iloc[-3] and
+                    renko_df['ema_short'].iloc[-3] < renko_df['ema_short'].iloc[-4] and
+                    renko_df['histogram'].iloc[-2] > renko_df['histogram'].iloc[-3] and
+                    renko_df['histogram'].iloc[-3] < renko_df['histogram'].iloc[-4]
                 )
                 crossdown = (
-                    renko_df['ema_short'].iloc[-2] < renko_df['ema_long'].iloc[-2] and
-                    renko_df['ema_short'].iloc[-3] > renko_df['ema_long'].iloc[-3]
+                    renko_df['ema_short'].iloc[-2] < renko_df['ema_short'].iloc[-3] and
+                    renko_df['ema_short'].iloc[-3] > renko_df['ema_short'].iloc[-4] and
+                    renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3] and
+                    renko_df['histogram'].iloc[-3] > renko_df['histogram'].iloc[-4]
                 )
 
                 if crossover:
                     message = f'Crossover #{symbol}'
                     title = f'Crossover {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_long", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
                 elif crossdown:
                     message = f'Crossdown #{symbol}'
                     title = f'Crossdown {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
                     await send_3commas_payload(symbol, "enter_short", renko_df['Close'].iloc[-1], int(datetime.now().timestamp()))
 
