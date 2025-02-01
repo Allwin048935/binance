@@ -11,7 +11,7 @@ import config
 import ta  # Import ta library
 from datetime import datetime
 
-interval = '15m'  # 5-minute candlesticks
+interval = '5m'  # 5-minute candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -43,7 +43,7 @@ exchange.set_sandbox_mode(True)  # ←-------------- add this to switch to the s
 last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=1000):
+def get_historical_data(symbol, interval, limit=500):
     ohlcv = exchange.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -52,11 +52,11 @@ def get_historical_data(symbol, interval, limit=1000):
     return df
 
 # Function to convert 5-minute candles to Renko bricks using 2% brick size
-def convert_to_renko(df, brick_size_percent=2.5):
+def convert_to_renko(df, brick_size_percent=1):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
-    ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
+    ref_close = df['Close'].iloc[-1]  # Use the close price of the 5-minute candle [-2]
     brick_size = ref_close * (brick_size_percent / 100)  # 2% of [-2] close price
     renko_data = []
     last_brick_close = ref_close  # Start from this reference close price
@@ -166,7 +166,7 @@ async def place_order(symbol, side, price):
         # Place the order
         order = exchange.create_order(
             symbol=symbol,
-            type='limit',
+            type='market',
             side=side,
             amount=quantity,
             price=price,
@@ -192,7 +192,7 @@ async def main():
                 historical_data = get_historical_data(symbol, interval)
 
                 # Convert to Renko bricks
-                renko_df = convert_to_renko(historical_data, brick_size_percent=2.5)
+                renko_df = convert_to_renko(historical_data, brick_size_percent=1)
                 if renko_df.empty:
                     continue  # Skip if no Renko bricks are generated
 
@@ -214,14 +214,14 @@ async def main():
                 if crossover:
                     message = f'Crossover #{symbol}'
                     title = f'Crossover {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
                     await place_order(symbol, 'buy', renko_df['Close'].iloc[-1])
 
                 elif crossdown:
                     message = f'Crossdown #{symbol}'
                     title = f'Crossdown {symbol}'
-                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=2.5)
+                    image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, title, brick_size_percent=1)
                     await send_telegram_message(symbol, message, image_buffer)
                     await place_order(symbol, 'sell', renko_df['Close'].iloc[-1])
 
