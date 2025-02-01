@@ -1,3 +1,4 @@
+import requests  # Import the requests library
 import ccxt
 import pandas as pd
 import ta  # Import ta library
@@ -119,7 +120,7 @@ async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                historical_data = get_historical_data(symbol, interval)
+                historical_data = get_historical_data(symbol, interval='5m')
 
                 # Convert to Renko bricks
                 renko_df = convert_to_renko(historical_data, brick_size_percent=1)
