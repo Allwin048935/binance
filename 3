@@ -137,12 +137,12 @@ async def main():
                 renko_df['ema_long'] = calculate_ema(renko_df, 14)
                 calculate_macd_histogram(renko_df)
 
-                crossover = renko_df['histogram'].iloc[-2] > renko_df['histogram'].iloc[-3] and renko_df['histogram'].iloc[-3] < renko_df['histogram'].iloc[-4]
-                crossdown = renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3] and renko_df['histogram'].iloc[-3] > renko_df['histogram'].iloc[-4]
+                crossover = renko_df['histogram'].iloc[-3] > renko_df['histogram'].iloc[-4] and renko_df['histogram'].iloc[-4] < renko_df['histogram'].iloc[-5]
+                crossdown = renko_df['histogram'].iloc[-3] < renko_df['histogram'].iloc[-4] and renko_df['histogram'].iloc[-4] > renko_df['histogram'].iloc[-5]
 
                 if crossover or crossdown:
                     action = "enter_long" if crossover else "enter_short"
-                    message = f"{symbol} - {'Crossover' if crossover else 'Crossdown'}"
+                    message = f"#{symbol} - {'Crossover' if crossover else 'Crossdown'}"
                     image_buffer = plot_renko_with_ema_and_histogram(historical_data, symbol, message)
 
                     if last_alert_messages.get(symbol) != message:
