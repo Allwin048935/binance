@@ -46,40 +46,37 @@ def get_historical_data(symbol, interval, limit=1000):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to convert 5-minute candles to Renko bricks
-def convert_to_renko(df, brick_size_percent=0.5, pivot_brick_percent=1.5):
+def convert_to_renko(df, brick_size_percent=1, pivot_brick_percent=3):
     if len(df) < 3:
         return pd.DataFrame()  # Not enough data
 
-    ref_close = df['Close'].iloc[-2]  # Use the close price of the 5-minute candle [-2]
-    brick_size = ref_close * (brick_size_percent / 100)  # 1% of [-2] close price
-    pivot_brick_size = ref_close * (pivot_brick_percent / 100)  # 3% of [-2] close price for direction change
     renko_data = []
-    last_brick_close = ref_close  # Start from this reference close price
+    last_brick_close = df['Close'].iloc[-2]  # Use the close price of the -2 candle
     direction = 1  # 1 for upward, -1 for downward
 
     for i in range(1, len(df)):
         close = df['Close'].iloc[i]
-        diff = close - last_brick_close
 
-        # Check if the price movement is sufficient to change direction (pivot condition)
-        if abs(diff) >= pivot_brick_size:
-            # Generate a single pivot brick (3%)
-            new_brick_close = last_brick_close + (pivot_brick_size if diff > 0 else -pivot_brick_size)
-            renko_data.append({
-                'Open': last_brick_close,
-                'High': max(last_brick_close, new_brick_close),
-                'Low': min(last_brick_close, new_brick_close),
-                'Close': new_brick_close
-            })
-            last_brick_close = new_brick_close
-            direction = 1 if diff > 0 else -1  # Update direction
+        # Use only fully closed candles (e.g., -2 candle)
+        if i < len(df) - 1:  # Skip the most recent candle (-1)
+            diff = close - last_brick_close
 
-        # Generate normal bricks (1%)
-        elif abs(diff) >= brick_size:
-            num_bricks = int(abs(diff) // brick_size)
-            for _ in range(num_bricks):
-                new_brick_close = last_brick_close + (direction * brick_size)
+            # Check if the price movement is sufficient to change direction (pivot condition)
+            if abs(diff) >= pivot_brick_percent / 100 * last_brick_close:
+                # Generate a single pivot brick (3%)
+                new_brick_close = last_brick_close + (pivot_brick_percent / 100 * last_brick_close if diff > 0 else -pivot_brick_percent / 100 * last_brick_close)
+                renko_data.append({
+                    'Open': last_brick_close,
+                    'High': max(last_brick_close, new_brick_close),
+                    'Low': min(last_brick_close, new_brick_close),
+                    'Close': new_brick_close
+                })
+                last_brick_close = new_brick_close
+                direction = 1 if diff > 0 else -1  # Update direction
+
+            # Generate normal bricks (1%)
+            elif abs(diff) >= brick_size_percent / 100 * last_brick_close:
+                new_brick_close = last_brick_close + (direction * brick_size_percent / 100 * last_brick_close)
                 renko_data.append({
                     'Open': last_brick_close,
                     'High': max(last_brick_close, new_brick_close),
