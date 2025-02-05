@@ -5,8 +5,9 @@ import asyncio
 import nest_asyncio
 import config1  # Import the config module
 import ta  # Import the ta library
+import json  # For saving Renko history
 
-interval = '1h'  # Original candlestick interval
+interval = '3m'  # Original candlestick interval
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -32,35 +33,50 @@ binance = ccxt.binance({
 # Dictionary to track the last alert message sent for each symbol
 last_alert_messages = {}
 
+# Load previous Renko close prices from a JSON file
+renko_history_file = "renko_history.json"
+try:
+    with open(renko_history_file, "r") as f:
+        renko_history = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    renko_history = {}  # Initialize empty if file not found or corrupted
+
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+def get_historical_data(symbol, interval, limit=500):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
+    
     # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to create Renko data with fixed percentage brick size
-def create_renko_data_with_fixed_percentage(df, percentage=2):
-    renko_data = []
-    last_close = None
+# Function to create and update Renko data with fixed percentage brick size
+def update_renko_data(df, symbol, percentage=2):
     brick_size = percentage / 100  # Convert percentage to decimal
+
+    # Load previous last Renko close price
+    last_renko_close = renko_history.get(symbol, None)
+    renko_data = []
 
     for index, row in df.iterrows():
         close = row['Close']
 
-        if last_close is None:
+        if last_renko_close is None:
             renko_data.append({'timestamp': index, 'Close': close})
-            last_close = close
+            last_renko_close = close
         else:
-            while abs(close - last_close) / last_close >= brick_size:
-                direction = 1 if close > last_close else -1
-                last_close += direction * last_close * brick_size
-                renko_data.append({'timestamp': index, 'Close': last_close})
+            while abs(close - last_renko_close) / last_renko_close >= brick_size:
+                direction = 1 if close > last_renko_close else -1
+                last_renko_close += direction * last_renko_close * brick_size
+                renko_data.append({'timestamp': index, 'Close': last_renko_close})
 
+    # Save the last Renko close price
+    if renko_data:
+        renko_history[symbol] = renko_data[-1]['Close']
+
+    # Convert list to DataFrame
     renko_df = pd.DataFrame(renko_data)
     renko_df.set_index('timestamp', inplace=True)
     return renko_df
@@ -120,8 +136,13 @@ async def main():
                 # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
 
-                # Convert historical data to Renko using fixed percentage brick size
-                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=2)
+                # Update Renko data with stored history
+                renko_data = update_renko_data(historical_data, symbol, percentage=2)
+
+                # Ensure sufficient data for EMA calculation
+                if len(renko_data) < 3:
+                    print(f"Skipping {symbol}, not enough Renko data.")
+                    continue
 
                 # Check EMA crossovers on Renko data
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
@@ -137,18 +158,19 @@ async def main():
                     action = None
 
                 if action:
-                    # Check if the last message is the same as the current one
                     last_message = last_alert_messages.get(symbol)
                     current_message = f"{symbol}:{action}"
 
                     if last_message != current_message:
                         await send_3commas_payload(symbol, action, close_price, timestamp)
                         last_alert_messages[symbol] = current_message
-                    else:
-                        print(f"Skipping duplicate message for {symbol}: {action}")
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
+
+        # Save Renko close history to file
+        with open(renko_history_file, "w") as f:
+            json.dump(renko_history, f)
 
         await asyncio.sleep(300)  # Sleep duration as needed
 
