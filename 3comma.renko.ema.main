@@ -42,7 +42,7 @@ except (FileNotFoundError, json.JSONDecodeError):
     renko_history = {}  # Initialize empty if file not found or corrupted
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=500):
+def get_historical_data(symbol, interval, limit=1500):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
