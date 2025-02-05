@@ -53,7 +53,7 @@ def get_historical_data(symbol, interval, limit=1500):
     return df
 
 # Function to create and update Renko data with fixed percentage brick size
-def update_renko_data(df, symbol, percentage=2):
+def update_renko_data(df, symbol, percentage=3):
     brick_size = percentage / 100  # Convert percentage to decimal
 
     # Load previous last Renko close price
