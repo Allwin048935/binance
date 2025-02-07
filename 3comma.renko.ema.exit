@@ -5,8 +5,9 @@ import asyncio
 import nest_asyncio
 import config1  # Import the config module
 import ta  # Import the ta library
+import json  # For saving Renko history
 
-interval = '1h'  # Original candlestick interval
+interval = '3m'  # Original candlestick interval
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -32,51 +33,57 @@ binance = ccxt.binance({
 # Dictionary to track the last alert message sent for each symbol
 last_alert_messages = {}
 
+# Load previous Renko close prices from a JSON file
+renko_history_file = "renko_history.json"
+try:
+    with open(renko_history_file, "r") as f:
+        renko_history = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    renko_history = {}  # Initialize empty if file not found or corrupted
+
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+def get_historical_data(symbol, interval, limit=1500):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to create Renko data with fixed percentage brick size
-def create_renko_data_with_fixed_percentage(df, percentage=1):
+# Function to create and update Renko data with fixed percentage brick size
+def update_renko_data(df, symbol, percentage=0.5):
+    brick_size = percentage / 100
+    last_renko_close = renko_history.get(symbol, None)
     renko_data = []
-    last_close = None
-    brick_size = percentage / 100  # Convert percentage to decimal
 
     for index, row in df.iterrows():
         close = row['Close']
-
-        if last_close is None:
+        if last_renko_close is None:
             renko_data.append({'timestamp': index, 'Close': close})
-            last_close = close
+            last_renko_close = close
         else:
-            while abs(close - last_close) / last_close >= brick_size:
-                direction = 1 if close > last_close else -1
-                last_close += direction * last_close * brick_size
-                renko_data.append({'timestamp': index, 'Close': last_close})
+            while abs(close - last_renko_close) / last_renko_close >= brick_size:
+                direction = 1 if close > last_renko_close else -1
+                last_renko_close += direction * last_renko_close * brick_size
+                renko_data.append({'timestamp': index, 'Close': last_renko_close})
+
+    if len(renko_data) > 1:
+        renko_history[symbol] = renko_data[-2]['Close']
 
     renko_df = pd.DataFrame(renko_data)
     renko_df.set_index('timestamp', inplace=True)
     return renko_df
 
-# Function to calculate EMA using ta library
+# Function to calculate EMA using Renko close prices
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to check EMA cross
-def check_ema_cross(df, short_period=1, long_period=3):
+# Function to check EMA cross using Renko data
+def check_ema_cross(df, short_period=1, long_period=9):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
-
     cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] #and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
     cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] #and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
-
     return cross_over, cross_under
 
 # Function to send payload to 3Commas
@@ -117,43 +124,27 @@ async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
-
-                # Convert historical data to Renko using fixed percentage brick size
-                renko_data = create_renko_data_with_fixed_percentage(historical_data, percentage=1)
-
-                # Check EMA crossovers on Renko data
+                renko_data = update_renko_data(historical_data, symbol, percentage=0.5)
+                if len(renko_data) < 3:
+                    print(f"Skipping {symbol}, not enough Renko data.")
+                    continue
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
                 close_price = renko_data['Close'].iloc[-1]
                 timestamp = int(renko_data.index[-1].timestamp())
-
-                # EMA cross events
-                if ema_cross_over:
-                    action = 'exit_short'
-                elif ema_cross_under:
-                    action = 'exit_long'
-                else:
-                    action = None
-
+                
+                action = 'exit_short' if ema_cross_over else 'exit_long' if ema_cross_under else None
                 if action:
-                    # Check if the last message is the same as the current one
                     last_message = last_alert_messages.get(symbol)
                     current_message = f"{symbol}:{action}"
-
                     if last_message != current_message:
                         await send_3commas_payload(symbol, action, close_price, timestamp)
                         last_alert_messages[symbol] = current_message
-                    else:
-                        print(f"Skipping duplicate message for {symbol}: {action}")
-
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
+        with open(renko_history_file, "w") as f:
+            json.dump(renko_history, f)
+        await asyncio.sleep(180)
 
-        await asyncio.sleep(300)  # Sleep duration as needed
-
-# Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
-
-# Create and run the event loop
 asyncio.run(main())
