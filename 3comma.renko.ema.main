@@ -51,7 +51,7 @@ def get_historical_data(symbol, interval, limit=1500):
     return df
 
 # Function to create and update Renko data with fixed percentage brick size
-def update_renko_data(df, symbol, percentage=2):
+def update_renko_data(df, symbol, percentage=0.5):
     brick_size = percentage / 100
     last_renko_close = renko_history.get(symbol, None)
     renko_data = []
@@ -79,7 +79,7 @@ def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 # Function to check EMA cross using Renko data
-def check_ema_cross(df, short_period=3, long_period=7):
+def check_ema_cross(df, short_period=9, long_period=26):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
     cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
@@ -130,8 +130,8 @@ async def main():
                     print(f"Skipping {symbol}, not enough Renko data.")
                     continue
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
-                close_price = renko_data['Close'].iloc[-2]
-                timestamp = int(renko_data.index[-2].timestamp())
+                close_price = renko_data['Close'].iloc[-1]
+                timestamp = int(renko_data.index[-1].timestamp())
                 
                 action = 'enter_long' if ema_cross_over else 'enter_short' if ema_cross_under else None
                 if action:
