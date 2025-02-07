@@ -83,34 +83,22 @@ def update_renko_data(df, symbol, percentage=3):
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to calculate MACD histogram
-def calculate_macd_histogram(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['macd'] = macd.macd()
-    df['signal'] = macd.macd_signal()
-    df['histogram'] = macd.macd_diff()
-
-# Function to plot Renko chart with EMA and MACD
+# Function to plot Renko chart with EMA
 def plot_renko_chart(renko_df, symbol):
     renko_df['ema_short'] = calculate_ema(renko_df, 4)
     renko_df['ema_long'] = calculate_ema(renko_df, 14)
-    calculate_macd_histogram(renko_df)
 
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
-    fig, axlist = mpf.plot(
+    fig, _ = mpf.plot(
         renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
         datetime_format='%H:%M', ylabel="Price ($)",
         addplot=[
             mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5),
-            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5),
-            mpf.make_addplot(renko_df['histogram'], type='bar', color='blue', panel=1, ylabel="MACD Histogram")
+            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5)
         ], returnfig=True
     )
-
-    ax = axlist[0]
-    ax.set_title(f"{symbol} - Renko Chart", fontsize=15)
 
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
@@ -169,22 +157,12 @@ async def main():
                 renko_df = update_renko_data(historical_data, symbol, percentage=0.5)
                 if renko_df.empty:
                     continue 
-
-                crossover = renko_df['histogram'].iloc[-2] > renko_df['histogram'].iloc[-3]
-                crossdown = renko_df['histogram'].iloc[-2] < renko_df['histogram'].iloc[-3]
-
-                if crossover:
-                    message = f'Crossover #{symbol}'
-                    image_buffer = plot_renko_chart(renko_df, symbol)
-                    await send_telegram_message(symbol, message, image_buffer)
-                    await send_3commas_payload(symbol, "enter_long", renko_df['Close'].iloc[-1])
-
-                elif crossdown:
-                    message = f'Crossdown #{symbol}'
-                    image_buffer = plot_renko_chart(renko_df, symbol)
-                    await send_telegram_message(symbol, message, image_buffer)
-                    await send_3commas_payload(symbol, "enter_short", renko_df['Close'].iloc[-1])
-
+                
+                message = f'Renko Update #{symbol}'
+                image_buffer = plot_renko_chart(renko_df, symbol)
+                await send_telegram_message(symbol, message, image_buffer)
+                await send_3commas_payload(symbol, "update", renko_df['Close'].iloc[-1])
+            
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
