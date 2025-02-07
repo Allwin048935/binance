@@ -125,7 +125,7 @@ async def main():
         for symbol in SELECTED_SYMBOLS:
             try:
                 historical_data = get_historical_data(symbol, interval)
-                renko_data = update_renko_data(historical_data, symbol, percentage=2)
+                renko_data = update_renko_data(historical_data, symbol, percentage=0.5)
                 if len(renko_data) < 3:
                     print(f"Skipping {symbol}, not enough Renko data.")
                     continue
