@@ -7,13 +7,13 @@ import config1  # Import the config module
 import ta  # Import the ta library
 import json  # For saving Renko history
 
-interval = '3m'  # Original candlestick interval
+interval = '5m'  # Original candlestick interval
 
-# Fetch SELECTED_SYMBOLS dynamically from Binance
-url = "https://api.binance.com/api/v3/exchangeInfo"
+# Fetch SELECTED_SYMBOLS dynamically from Binance Futures
+url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()
+    response.raise_for_status()  # Check if the request was successful
     data = response.json()
 
     SELECTED_SYMBOLS = [
@@ -21,7 +21,7 @@ try:
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
     ]
 except requests.exceptions.RequestException as e:
-    print(f"Error fetching data from Binance: {e}")
+    print(f"Error fetching data from Binance Futures: {e}")
     SELECTED_SYMBOLS = []
 
 # Initialize Binance client
@@ -51,7 +51,7 @@ def get_historical_data(symbol, interval, limit=1500):
     return df
 
 # Function to create and update Renko data with fixed percentage brick size
-def update_renko_data(df, symbol, percentage=0.5):
+def update_renko_data(df, symbol, percentage=1):
     brick_size = percentage / 100
     last_renko_close = renko_history.get(symbol, None)
     renko_data = []
@@ -79,11 +79,11 @@ def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 # Function to check EMA cross using Renko data
-def check_ema_cross(df, short_period=1, long_period=9):
+def check_ema_cross(df, short_period=2, long_period=9):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] #and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] #and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
+    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
+    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
     return cross_over, cross_under
 
 # Function to send payload to 3Commas
@@ -125,7 +125,7 @@ async def main():
         for symbol in SELECTED_SYMBOLS:
             try:
                 historical_data = get_historical_data(symbol, interval)
-                renko_data = update_renko_data(historical_data, symbol, percentage=0.5)
+                renko_data = update_renko_data(historical_data, symbol, percentage=1)
                 if len(renko_data) < 3:
                     print(f"Skipping {symbol}, not enough Renko data.")
                     continue
@@ -144,7 +144,7 @@ async def main():
                 print(f"Error processing {symbol}: {e}")
         with open(renko_history_file, "w") as f:
             json.dump(renko_history, f)
-        await asyncio.sleep(180)
+        await asyncio.sleep(300)
 
 nest_asyncio.apply()
 asyncio.run(main())
