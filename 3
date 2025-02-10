@@ -63,12 +63,6 @@ def get_historical_data(symbol, interval, limit=1500):
     # Rename columns for mplfinance compatibility
     df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
-    # Debugging: Print column names after renaming
-    print(f"After renaming ({symbol}): {df.columns.tolist()}")
-
-    # Print first few rows to check DataFrame structure
-    print(f"Data Sample ({symbol}):\n", df.head())
-
     return df if not df.empty else None
 
 
