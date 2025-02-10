@@ -51,8 +51,10 @@ def get_historical_data(symbol, interval, limit=1500):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-    # Ensure column names are consistent
+
+    # Ensure column names are consistent and properly formatted for mplfinance
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    
     return df
 
 # Function to create and update Renko data with fixed percentage brick size
@@ -76,6 +78,11 @@ def update_renko_data(df, symbol, percentage=1):
         renko_history[symbol] = renko_data[-2]['Close']
 
     renko_df = pd.DataFrame(renko_data)
+
+    # Ensure that DataFrame has at least two data points
+    if len(renko_df) < 2:
+        return None
+    
     renko_df.set_index('timestamp', inplace=True)
     return renko_df
 
@@ -95,17 +102,21 @@ def check_ema_cross(df, short_period=9, long_period=26):
 
 # Function to plot Renko candles with EMA lines
 def plot_renko_candles(df, symbol, title):
+    if df is None or df.empty:
+        print(f"Skipping {symbol} - Not enough Renko data to plot.")
+        return None
+
     # Create custom market colors for up and down Renko bricks
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
 
-    # Create a custom style using the market colors and other style settings
+    # Create a custom style using the market colors
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
     # Add EMA lines to the plot
     short_ema = calculate_ema(df, 9)
     long_ema = calculate_ema(df, 26)
 
-    # Plot figure with custom ratio and return it for further customization
+    # Plot figure
     fig, axlist = mpf.plot(
         df,
         figratio=(10, 6),
@@ -122,14 +133,14 @@ def plot_renko_candles(df, symbol, title):
     )
 
     # Add Title
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
+    axlist[0].set_title(f"{symbol} - {title}", fontsize=20, style='italic')
 
     # Save plot to a BytesIO object
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
 
-    # Close the figure to avoid memory overflow
+    # Close the figure to avoid memory issues
     plt.close(fig)
 
     return buf
@@ -138,11 +149,15 @@ def plot_renko_candles(df, symbol, title):
 async def send_telegram_message(symbol, message, image_buffer):
     if last_alert_messages.get(symbol) != message:
         await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
-        await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
+        if image_buffer:
+            await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
         last_alert_messages[symbol] = message
 
 # Main function
 async def main():
+    global telegram_bot
+    telegram_bot = Bot(token=config.TELEGRAM_TOKEN)  # Initialize inside async function
+
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
@@ -152,12 +167,15 @@ async def main():
                 # Update Renko data
                 renko_data = update_renko_data(historical_data, symbol, percentage=1)
                 
+                if renko_data is None:
+                    continue
+
                 # Check EMA crossovers
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
 
-                # EMA cross events
+                # Send alerts
                 if ema_cross_over:
-                    message = f'/enter_long {symbol}'  # EMA Cross over detected on #{symbol}
+                    message = f'/enter_long {symbol}'
                     title = f'EMA Cross Over for {symbol}'
                     image_buffer = plot_renko_candles(renko_data, symbol, title)
                     await send_telegram_message(symbol, message, image_buffer)
@@ -174,13 +192,8 @@ async def main():
         with open(renko_history_file, "w") as f:
             json.dump(renko_history, f)
 
-        await asyncio.sleep(300)  # Sleep duration as needed
-
-# Initialize Telegram Bot
-telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
+        await asyncio.sleep(300)  # Sleep for 5 minutes
 
 # Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
-
-# Create and run the event loop
 asyncio.run(main())
