@@ -10,8 +10,13 @@ import config
 import ta
 import json
 import requests
+import logging
 
-interval = '5m'  # Candlestick interval
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Candlestick interval
+interval = '5m'
 
 # Initialize Binance client
 binance = ccxt.binance({
@@ -38,30 +43,39 @@ try:
     data = response.json()
     SELECTED_SYMBOLS = [s['symbol'] for s in data['symbols'] if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING']
 except requests.exceptions.RequestException as e:
-    print(f"Error fetching data from Binance Futures: {e}")
+    logging.error(f"Error fetching data from Binance Futures: {e}")
     SELECTED_SYMBOLS = []
 
 # Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=1500):
-    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
-    
-    if not ohlcv:
-        print(f"Error: No data returned for {symbol}")
+    try:
+        ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+        
+        if not ohlcv:
+            logging.error(f"No data returned for {symbol}")
+            return None
+        
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # Strip any leading/trailing spaces and title-case the column names
+        df.columns = df.columns.str.strip()
+        
+        # Rename columns for mplfinance compatibility
+        df.rename(columns={
+            'open': 'Open',
+            'high': 'High',
+            'low': 'Low',
+            'close': 'Close',
+            'volume': 'Volume'
+        }, inplace=True)
+        
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        return df if not df.empty else None
+    except Exception as e:
+        logging.error(f"Error fetching historical data for {symbol}: {e}")
         return None
-    
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-
-    # Strip any leading/trailing spaces and title-case the column names
-    df.columns = df.columns.str.strip()
-
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-
-    # Rename columns for mplfinance compatibility
-    df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
-
-    return df if not df.empty else None
-
 
 # Function to create and update Renko data
 def update_renko_data(df, symbol, percentage=1):
@@ -111,7 +125,7 @@ def check_ema_cross(df, short_period=9, long_period=26):
 # Function to plot Renko candles with EMA lines
 def plot_renko_candles(df, symbol, title):
     if df is None or df.empty:
-        print(f"Skipping {symbol} - Not enough Renko data to plot.")
+        logging.warning(f"Skipping {symbol} - Not enough Renko data to plot.")
         return None
 
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
@@ -184,7 +198,7 @@ async def main():
                     await send_telegram_message(symbol, message, image_buffer)
 
             except Exception as e:
-                print(f"Error processing {symbol}: {e}")
+                logging.error(f"Error processing {symbol}: {e}")
 
         with open(renko_history_file, "w") as f:
             json.dump(renko_history, f)
