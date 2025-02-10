@@ -35,7 +35,7 @@ binance = ccxt.binance({
 last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+def get_historical_data(symbol, interval, limit=200):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -55,8 +55,8 @@ def check_ema_cross(short_df, long_df):
     long_ema = calculate_ema(long_df, period=30)   # 4h EMA (30)
 
     # Use the latest two values to check for crossover
-    cross_over = short_ema.iloc[-2] > long_ema.iloc[-2] and short_ema.iloc[-3] <= long_ema.iloc[-3]
-    cross_under = short_ema.iloc[-2] < long_ema.iloc[-2] and short_ema.iloc[-3] >= long_ema.iloc[-3]
+    cross_over = short_ema.iloc[-1] > long_ema.iloc[-1] and short_ema.iloc[-1] <= long_ema.iloc[-1]
+    cross_under = short_ema.iloc[-1] < long_ema.iloc[-1] and short_ema.iloc[-1] >= long_ema.iloc[-1]
 
     return cross_over, cross_under
 
