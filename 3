@@ -9,6 +9,7 @@ from telegram import Bot
 import config  # Import the config module
 import ta  # Import ta library
 import json  # For saving Renko history
+import requests  # For fetching symbols from Binance Futures
 
 interval = '5m'  # Original candlestick interval
 
@@ -28,6 +29,21 @@ try:
         renko_history = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     renko_history = {}  # Initialize empty if file not found or corrupted
+
+# Fetch SELECTED_SYMBOLS dynamically from Binance Futures
+url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+try:
+    response = requests.get(url)
+    response.raise_for_status()  # Check if the request was successful
+    data = response.json()
+
+    SELECTED_SYMBOLS = [
+        s['symbol'] for s in data['symbols']
+        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
+    ]
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching data from Binance Futures: {e}")
+    SELECTED_SYMBOLS = []
 
 # Function to get historical candlestick data
 def get_historical_data(symbol, interval, limit=1500):
@@ -127,7 +143,7 @@ async def send_telegram_message(symbol, message, image_buffer):
 # Main function
 async def main():
     while True:
-        for symbol in config.SELECTED_SYMBOLS:
+        for symbol in SELECTED_SYMBOLS:
             try:
                 # Fetch historical data
                 historical_data = get_historical_data(symbol, interval)
