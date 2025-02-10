@@ -50,20 +50,27 @@ def get_historical_data(symbol, interval, limit=1500):
         return None
     
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    
+
     # Debugging: Print column names before renaming
-    print(f"Before renaming: {df.columns.tolist()}")
+    print(f"Before renaming ({symbol}): {df.columns.tolist()}")
+
+    # Strip any leading/trailing spaces and title-case the column names
+    df.columns = df.columns.str.strip()
 
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
 
-    # Ensure column names are correctly formatted for mplfinance
-    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    # Rename columns for mplfinance compatibility
+    df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
 
     # Debugging: Print column names after renaming
-    print(f"After renaming: {df.columns.tolist()}")
+    print(f"After renaming ({symbol}): {df.columns.tolist()}")
 
-    return df
+    # Print first few rows to check DataFrame structure
+    print(f"Data Sample ({symbol}):\n", df.head())
+
+    return df if not df.empty else None
+
 
 # Function to create and update Renko data
 def update_renko_data(df, symbol, percentage=1):
