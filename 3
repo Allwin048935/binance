@@ -61,30 +61,6 @@ def get_historical_data(symbol, interval, limit=1500):
         # Debug: Print raw column names
         logging.debug(f"Raw columns for {symbol}: {df.columns.tolist()}")
         
-        # Strip any leading/trailing spaces in column names
-        df.columns = df.columns.str.strip()
-        
-        # Debug: Print column names after stripping
-        logging.debug(f"Columns after stripping for {symbol}: {df.columns.tolist()}")
-        
-        # Ensure required columns are present
-        required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in required_columns):
-            logging.error(f"Missing required columns in DataFrame for {symbol}")
-            return None
-        
-        # Rename columns for mplfinance compatibility
-        df.rename(columns={
-            'open': 'Open',
-            'high': 'High',
-            'low': 'Low',
-            'close': 'Close',
-            'volume': 'Volume'
-        }, inplace=True)
-        
-        # Debug: Print column names after renaming
-        logging.debug(f"Columns after renaming for {symbol}: {df.columns.tolist()}")
-        
         # Convert timestamp to datetime and set as index
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
@@ -104,18 +80,18 @@ def update_renko_data(df, symbol, percentage=1):
     renko_data = []
 
     for index, row in df.iterrows():
-        close = row['Close']
+        close = row['close']  # Use raw column name
         if last_renko_close is None:
-            renko_data.append({'timestamp': index, 'Close': close})
+            renko_data.append({'timestamp': index, 'close': close})
             last_renko_close = close
         else:
             while abs(close - last_renko_close) / last_renko_close >= brick_size:
                 direction = 1 if close > last_renko_close else -1
                 last_renko_close += direction * last_renko_close * brick_size
-                renko_data.append({'timestamp': index, 'Close': last_renko_close})
+                renko_data.append({'timestamp': index, 'close': last_renko_close})
 
     if len(renko_data) > 1:
-        renko_history[symbol] = renko_data[-2]['Close']
+        renko_history[symbol] = renko_data[-2]['close']
 
     renko_df = pd.DataFrame(renko_data)
 
@@ -127,7 +103,7 @@ def update_renko_data(df, symbol, percentage=1):
 
 # Function to calculate EMA using ta library
 def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
+    return ta.trend.EMAIndicator(df['close'], window=period).ema_indicator()  # Use raw column name
 
 # Function to check EMA cross
 def check_ema_cross(df, short_period=9, long_period=26):
@@ -151,8 +127,17 @@ def plot_renko_candles(df, symbol, title):
     short_ema = calculate_ema(df, 9)
     long_ema = calculate_ema(df, 26)
 
+    # Rename columns temporarily for mplfinance compatibility
+    df_renamed = df.rename(columns={
+        'open': 'Open',
+        'high': 'High',
+        'low': 'Low',
+        'close': 'Close',
+        'volume': 'Volume'
+    })
+
     fig, axlist = mpf.plot(
-        df,
+        df_renamed,
         figratio=(10, 6),
         type="candle",
         style=s,
