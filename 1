@@ -55,8 +55,8 @@ def check_ema_cross(short_df, long_df):
     long_ema = calculate_ema(long_df, period=30)   # 4h EMA (30)
 
     # Use the latest two values to check for crossover
-    cross_over = short_ema.iloc[-1] > long_ema.iloc[-1] and short_ema.iloc[-1] <= long_ema.iloc[-1]
-    cross_under = short_ema.iloc[-1] < long_ema.iloc[-1] and short_ema.iloc[-1] >= long_ema.iloc[-1]
+    cross_over = short_ema.iloc[-1] > long_ema.iloc[-1] #and short_ema.iloc[-1] <= long_ema.iloc[-1]
+    cross_under = short_ema.iloc[-1] < long_ema.iloc[-1] #and short_ema.iloc[-1] >= long_ema.iloc[-1]
 
     return cross_over, cross_under
 
