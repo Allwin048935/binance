@@ -55,10 +55,23 @@ def get_historical_data(symbol, interval, limit=1500):
             logging.error(f"No data returned for {symbol}")
             return None
         
+        # Create DataFrame with raw column names
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        # Strip any leading/trailing spaces and title-case the column names
+        # Debug: Print raw column names
+        logging.debug(f"Raw columns for {symbol}: {df.columns.tolist()}")
+        
+        # Strip any leading/trailing spaces in column names
         df.columns = df.columns.str.strip()
+        
+        # Debug: Print column names after stripping
+        logging.debug(f"Columns after stripping for {symbol}: {df.columns.tolist()}")
+        
+        # Ensure required columns are present
+        required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        if not all(col in df.columns for col in required_columns):
+            logging.error(f"Missing required columns in DataFrame for {symbol}")
+            return None
         
         # Rename columns for mplfinance compatibility
         df.rename(columns={
@@ -69,6 +82,10 @@ def get_historical_data(symbol, interval, limit=1500):
             'volume': 'Volume'
         }, inplace=True)
         
+        # Debug: Print column names after renaming
+        logging.debug(f"Columns after renaming for {symbol}: {df.columns.tolist()}")
+        
+        # Convert timestamp to datetime and set as index
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         
