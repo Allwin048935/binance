@@ -51,9 +51,6 @@ def get_historical_data(symbol, interval, limit=1500):
     
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
-    # Debugging: Print column names before renaming
-    print(f"Before renaming ({symbol}): {df.columns.tolist()}")
-
     # Strip any leading/trailing spaces and title-case the column names
     df.columns = df.columns.str.strip()
 
