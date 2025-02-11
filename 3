@@ -13,15 +13,15 @@ import requests
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Candlestick interval
-interval = '5m'
+interval = "5m"
 
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey': config.API_KEY,
-    'secret': config.API_SECRET,
+    "apiKey": config.API_KEY,
+    "secret": config.API_SECRET,
 })
 
 # Dictionary to store the last alert messages for each symbol
@@ -41,7 +41,7 @@ try:
     response = requests.get(url)
     response.raise_for_status()
     data = response.json()
-    SELECTED_SYMBOLS = [s['symbol'] for s in data['symbols'] if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING']
+    SELECTED_SYMBOLS = [s["symbol"] for s in data["symbols"] if s["quoteAsset"] == "USDT" and s["status"] == "TRADING"]
 except requests.exceptions.RequestException as e:
     logging.error(f"Error fetching data from Binance Futures: {e}")
     SELECTED_SYMBOLS = []
@@ -50,21 +50,18 @@ except requests.exceptions.RequestException as e:
 def get_historical_data(symbol, interval, limit=1500):
     try:
         ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
-        
+
         if not ohlcv:
             logging.error(f"No data returned for {symbol}")
             return None
-        
-        # Create DataFrame with raw column names
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        
-        # Debug: Print raw column names
-        logging.debug(f"Raw columns for {symbol}: {df.columns.tolist()}")
-        
+
+        # Create DataFrame with lowercase column names
+        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+
         # Convert timestamp to datetime and set as index
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+
         return df if not df.empty else None
     except Exception as e:
         logging.error(f"Error fetching historical data for {symbol}: {e}")
@@ -74,44 +71,47 @@ def get_historical_data(symbol, interval, limit=1500):
 def update_renko_data(df, symbol, percentage=1):
     if df is None or df.empty:
         return None
-    
+
     brick_size = percentage / 100
     last_renko_close = renko_history.get(symbol, None)
     renko_data = []
 
     for index, row in df.iterrows():
-        close = row['close']  # Use raw column name
+        close = row["close"]
         if last_renko_close is None:
-            renko_data.append({'timestamp': index, 'close': close})
+            renko_data.append({"timestamp": index, "close": close})
             last_renko_close = close
         else:
             while abs(close - last_renko_close) / last_renko_close >= brick_size:
                 direction = 1 if close > last_renko_close else -1
                 last_renko_close += direction * last_renko_close * brick_size
-                renko_data.append({'timestamp': index, 'close': last_renko_close})
+                renko_data.append({"timestamp": index, "close": last_renko_close})
 
     if len(renko_data) > 1:
-        renko_history[symbol] = renko_data[-2]['close']
+        renko_history[symbol] = renko_data[-2]["close"]
 
     renko_df = pd.DataFrame(renko_data)
 
     if len(renko_df) < 2:
         return None
-    
-    renko_df.set_index('timestamp', inplace=True)
+
+    renko_df.set_index("timestamp", inplace=True)
     return renko_df
 
 # Function to calculate EMA using ta library
 def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['close'], window=period).ema_indicator()  # Use raw column name
+    if "close" not in df:
+        logging.error("Column 'close' not found in DataFrame!")
+        return None
+    return ta.trend.EMAIndicator(df["close"], window=period).ema_indicator()
 
 # Function to check EMA cross
 def check_ema_cross(df, short_period=9, long_period=26):
-    df['ema_short'] = calculate_ema(df, short_period)
-    df['ema_long'] = calculate_ema(df, long_period)
+    df["ema_short"] = calculate_ema(df, short_period)
+    df["ema_long"] = calculate_ema(df, long_period)
 
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
+    cross_over = df["ema_short"].iloc[-2] > df["ema_long"].iloc[-2] and df["ema_short"].iloc[-3] <= df["ema_long"].iloc[-3]
+    cross_under = df["ema_short"].iloc[-2] < df["ema_long"].iloc[-2] and df["ema_short"].iloc[-3] >= df["ema_long"].iloc[-3]
 
     return cross_over, cross_under
 
@@ -121,19 +121,19 @@ def plot_renko_candles(df, symbol, title):
         logging.warning(f"Skipping {symbol} - Not enough Renko data to plot.")
         return None
 
-    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+    mc = mpf.make_marketcolors(up="#2fc71e", down="#ed2f1a", inherit=True)
+    s = mpf.make_mpf_style(base_mpl_style=["bmh", "dark_background"], marketcolors=mc, y_on_right=True)
 
     short_ema = calculate_ema(df, 9)
     long_ema = calculate_ema(df, 26)
 
-    # Rename columns temporarily for mplfinance compatibility
+    # Temporarily rename for mplfinance
     df_renamed = df.rename(columns={
-        'open': 'Open',
-        'high': 'High',
-        'low': 'Low',
-        'close': 'Close',
-        'volume': 'Volume'
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume"
     })
 
     fig, axlist = mpf.plot(
@@ -142,19 +142,19 @@ def plot_renko_candles(df, symbol, title):
         type="candle",
         style=s,
         tight_layout=True,
-        datetime_format='%H:%M',
+        datetime_format="%H:%M",
         ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(short_ema, color="cyan", width=1.5, linestyle="-"),
+            mpf.make_addplot(long_ema, color="magenta", width=1.5, linestyle="-"),
         ],
         returnfig=True
     )
 
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=20, style='italic')
+    axlist[0].set_title(f"{symbol} - {title}", fontsize=20, style="italic")
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
+    plt.savefig(buf, format="png", bbox_inches="tight")
     buf.seek(0)
 
     plt.close(fig)
@@ -177,7 +177,7 @@ async def main():
         for symbol in SELECTED_SYMBOLS:
             try:
                 historical_data = get_historical_data(symbol, interval)
-                
+
                 if historical_data is None:
                     continue
 
@@ -189,21 +189,12 @@ async def main():
                 ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
 
                 if ema_cross_over:
-                    message = f'/enter_long {symbol}'
-                    title = f'EMA Cross Over for {symbol}'
-                    image_buffer = plot_renko_candles(renko_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer)
+                    await send_telegram_message(symbol, f"/enter_long {symbol}", plot_renko_candles(renko_data, symbol, "EMA Cross Over"))
                 elif ema_cross_under:
-                    message = f'/enter_short {symbol}'
-                    title = f'EMA Cross Under for {symbol}'
-                    image_buffer = plot_renko_candles(renko_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer)
+                    await send_telegram_message(symbol, f"/enter_short {symbol}", plot_renko_candles(renko_data, symbol, "EMA Cross Under"))
 
             except Exception as e:
                 logging.error(f"Error processing {symbol}: {e}")
-
-        with open(renko_history_file, "w") as f:
-            json.dump(renko_history, f)
 
         await asyncio.sleep(300)
 
