@@ -7,8 +7,9 @@ import asyncio
 import json
 from io import BytesIO
 from telegram import Bot
-import  config1
+import config1
 import ta
+from datetime import datetime, timezone
 
 INTERVAL = '5m'
 RENKO_JSON_FILE = "renko_history.json"
@@ -30,8 +31,8 @@ except requests.exceptions.RequestException as e:
 
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey':  config1.API_KEY,
-    'secret':  config1.API_SECRET,
+    'apiKey': config1.API_KEY,
+    'secret': config1.API_SECRET,
 })
 
 # Load Renko history
@@ -56,7 +57,7 @@ def save_renko_history():
     with open(RENKO_JSON_FILE, "w") as file:
         json.dump(renko_history, file, indent=4)
 
-def get_historical_data(symbol, interval, limit=1000):
+def get_historical_data(symbol, interval, limit=1500):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -64,7 +65,7 @@ def get_historical_data(symbol, interval, limit=1000):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-def convert_to_renko(symbol, df, brick_size_percent=1):
+def convert_to_renko(symbol, df, brick_size_percent=0.5):
     if len(df) < 3:
         return pd.DataFrame()
     
@@ -119,16 +120,16 @@ def detect_ema_crossover(renko_df):
 def plot_renko_chart(df, symbol):
     renko_df = convert_to_renko(symbol, df)
     if renko_df.empty:
-        return None, None
+        return None, None, None
     
     renko_df = renko_df[-120:]
     
     renko_df['ema_short'] = calculate_ema(renko_df, 1)
-    renko_df['ema_long'] = calculate_ema(renko_df, 9)
+    renko_df['ema_long'] = calculate_ema(renko_df, 26)
     
     crossover_signal = detect_ema_crossover(renko_df)
     if not crossover_signal:
-        return None, None
+        return None, None, None
 
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
@@ -149,9 +150,44 @@ def plot_renko_chart(df, symbol):
     buf.seek(0)
     plt.close(fig)
 
-    return buf, crossover_signal
+    close_price = renko_df['Close'].iloc[-1]
+    return buf, crossover_signal, close_price
 
-async def send_alert(bot, symbol, crossover_signal, image_buffer):
+# Function to send payload to 3Commas
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    payloads = [
+        {
+            "secret": config1.SECRET_1,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "Bitget",
+            "tv_instrument": symbol.replace('/', '') + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_1,
+        },
+        {
+            "secret": config1.SECRET_2,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "Bitget",
+            "tv_instrument": symbol.replace('/', '') + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_2,
+        }
+    ]
+
+    for payload in payloads:
+        print(f"Sending payload: {symbol} with action {action}")
+        try:
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+            response.raise_for_status()
+            print(f"Payload sent for {symbol} with action {action}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error sending payload for {symbol}: {e}")
+
+async def send_alert(bot, symbol, crossover_signal, image_buffer, close_price):
     message = f"#{symbol}: {crossover_signal}"
 
     if last_alert_messages.get(symbol) == message:
@@ -160,17 +196,21 @@ async def send_alert(bot, symbol, crossover_signal, image_buffer):
     last_alert_messages[symbol] = message
     save_alert_history()
 
-    await bot.send_photo(chat_id= config1.CHAT_ID, photo=image_buffer, caption=message)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    action = "enter_long" if "Bullish" in crossover_signal else "enter_short"
+    
+    await send_3commas_payload(symbol, action, close_price, timestamp)
+    await bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=message)
 
 async def main(tg_bot):
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
                 df = get_historical_data(symbol, INTERVAL)
-                image_buffer, crossover_signal = plot_renko_chart(df, symbol)
+                image_buffer, crossover_signal, close_price = plot_renko_chart(df, symbol)
 
                 if image_buffer and crossover_signal:
-                    await send_alert(tg_bot, symbol, crossover_signal, image_buffer)
+                    await send_alert(tg_bot, symbol, crossover_signal, image_buffer, close_price)
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
@@ -178,5 +218,5 @@ async def main(tg_bot):
         await asyncio.sleep(300)
 
 if __name__ == "__main__":
-    tg_bot = Bot(token= config1.TELEGRAM_TOKEN)
+    tg_bot = Bot(token=config1.TELEGRAM_TOKEN)
     asyncio.run(main(tg_bot))
