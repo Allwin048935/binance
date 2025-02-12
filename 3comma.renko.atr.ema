@@ -160,7 +160,7 @@ def plot_renko_chart(df, symbol):
 
 async def send_alert(bot, symbol, signal, image_buffer):
     chat_id = config1.TELEGRAM_CHAT_ID
-    message = f"🚨 {symbol} - {signal} 🚨"
+    message = f"🚨 #{symbol} - {signal} 🚨"
     
     try:
         await bot.send_photo(chat_id=chat_id, photo=image_buffer, caption=message)
