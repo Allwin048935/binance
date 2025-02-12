@@ -123,8 +123,8 @@ def plot_renko_chart(df, symbol):
     
     renko_df = renko_df[-120:]
     
-    renko_df['ema_short'] = calculate_ema(renko_df, 9)
-    renko_df['ema_long'] = calculate_ema(renko_df, 26)
+    renko_df['ema_short'] = calculate_ema(renko_df, 1)
+    renko_df['ema_long'] = calculate_ema(renko_df, 9)
     
     crossover_signal = detect_ema_crossover(renko_df)
     if not crossover_signal:
@@ -152,7 +152,7 @@ def plot_renko_chart(df, symbol):
     return buf, crossover_signal
 
 async def send_alert(bot, symbol, crossover_signal, image_buffer):
-    message = f"#{symbol}: {crossover_signal}"
+    message = f"{symbol}: {crossover_signal}"
 
     if last_alert_messages.get(symbol) == message:
         return
