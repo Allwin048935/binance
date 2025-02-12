@@ -57,7 +57,7 @@ def save_renko_history():
     with open(RENKO_JSON_FILE, "w") as file:
         json.dump(renko_history, file, indent=4)
 
-def get_historical_data(symbol, interval, limit=1000):
+def get_historical_data(symbol, interval, limit=1500):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -124,7 +124,7 @@ def plot_renko_chart(df, symbol):
     
     renko_df = renko_df[-120:]
     
-    renko_df['ema_short'] = calculate_ema(renko_df, 1)
+    renko_df['ema_short'] = calculate_ema(renko_df, 2)
     renko_df['ema_long'] = calculate_ema(renko_df, 26)
     
     crossover_signal = detect_ema_crossover(renko_df)
