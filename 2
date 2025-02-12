@@ -152,7 +152,7 @@ def plot_renko_chart(df, symbol):
     return buf, crossover_signal
 
 async def send_alert(bot, symbol, crossover_signal, image_buffer):
-    message = f"{symbol}: {crossover_signal}"
+    message = f"#{symbol}: {crossover_signal}"
 
     if last_alert_messages.get(symbol) == message:
         return
