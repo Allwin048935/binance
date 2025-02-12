@@ -111,10 +111,10 @@ def detect_ema_crossover(renko_df):
     ema_short_prev, ema_long_prev = renko_df['ema_short'].iloc[-2], renko_df['ema_long'].iloc[-2]
     ema_short_curr, ema_long_curr = renko_df['ema_short'].iloc[-1], renko_df['ema_long'].iloc[-1]
 
-    if ema_short_prev <= ema_long_prev and ema_short_curr > ema_long_curr:
+    if ema_short_curr > ema_long_curr:
         return "Bullish Crossover"
-    elif ema_short_prev >= ema_long_prev and ema_short_curr < ema_long_curr:
-        return "Bearish Crossover"
+    elif ema_short_curr < ema_long_curr:
+        return "Bearish Crossunder"
     return None
 
 def plot_renko_chart(df, symbol):
