@@ -1,20 +1,14 @@
-
 import requests
 import ccxt
 import pandas as pd
-import matplotlib.pyplot as plt
-import mplfinance as mpf
 import asyncio
-import json
-from io import BytesIO
-from telegram import Bot
-import config  # Import the config module
+import nest_asyncio
+import config1  # Import the config module
 import ta  # Import ta library
 
-INTERVAL = '5m'  # 5-minute candlesticks
-RENKO_JSON_FILE = "renko_history.json"
+interval = '2h'  # Adjust to '4h' if needed
 
-# Fetch selected symbols dynamically from Binance
+# Fetch SELECTED_SYMBOLS dynamically from Binance Futures
 url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 try:
     response = requests.get(url)
@@ -29,130 +23,106 @@ except requests.exceptions.RequestException as e:
     print(f"Error fetching data from Binance Futures: {e}")
     SELECTED_SYMBOLS = []
 
-
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey': config.API_KEY,
-    'secret': config.API_SECRET,
+    'apiKey': config1.API_KEY,
+    'secret': config1.API_SECRET,
 })
 
-# Load Renko history from JSON
-try:
-    with open(RENKO_JSON_FILE, "r") as file:
-        renko_history = json.load(file)
-except (FileNotFoundError, json.JSONDecodeError):
-    renko_history = {}
-
-# Function to save Renko history
-def save_renko_history():
-    with open(RENKO_JSON_FILE, "w") as file:
-        json.dump(renko_history, file, indent=4)
+# Dictionary to track the last alert message sent for each symbol
+last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=1000):
+def get_historical_data(symbol, interval, limit=100):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
+
+    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to convert to Renko bricks and store history
-def convert_to_renko(symbol, df, brick_size_percent=1):
-    if len(df) < 3:
-        return pd.DataFrame()
-    
-    ref_close = df['Close'].iloc[-2]
-    brick_size = ref_close * (brick_size_percent / 100)
-    renko_data = renko_history.get(symbol, [])
-    last_brick_close = renko_data[-1]['Close'] if renko_data else ref_close
-    
-    for i in range(1, len(df)):
-        close = df['Close'].iloc[i]
-        diff = close - last_brick_close
-        
-        if abs(diff) >= brick_size:
-            num_bricks = int(abs(diff) // brick_size)
-            direction = 1 if diff > 0 else -1
-            
-            for _ in range(num_bricks):
-                new_brick_close = last_brick_close + (direction * brick_size)
-                renko_data.append({
-                    'Open': last_brick_close,
-                    'High': max(last_brick_close, new_brick_close),
-                    'Low': min(last_brick_close, new_brick_close),
-                    'Close': new_brick_close
-                })
-                last_brick_close = new_brick_close
-    
-    renko_history[symbol] = renko_data[-500:]
-    save_renko_history()
-    
-    renko_df = pd.DataFrame(renko_data)
-    if not renko_df.empty:
-        renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
-    
-    return renko_df
-
-# Function to calculate EMA
+# Function to calculate EMA using ta library
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to calculate MACD histogram
-def calculate_macd_histogram(df):
-    macd = ta.trend.MACD(df['Close'])
-    df['macd'] = macd.macd()
-    df['signal'] = macd.macd_signal()
-    df['histogram'] = macd.macd_diff()
+# Function to check EMA cross and exit conditions
+def check_ema_conditions(df, symbol):
+    df['ema_short'] = calculate_ema(df, 1)
+    df['ema_long'] = calculate_ema(df, 30)
 
-# Function to plot Renko bricks
-def plot_renko_chart(df, symbol):
-    renko_df = convert_to_renko(symbol, df)
-    if renko_df.empty:
-        return None
-    
-    renko_df['ema_short'] = calculate_ema(renko_df, 9)
-    renko_df['ema_long'] = calculate_ema(renko_df, 26)
-    calculate_macd_histogram(renko_df)
-    
-    macd_colors = ['green' if renko_df['histogram'].iloc[i] > renko_df['histogram'].iloc[i - 1] else 'red' for i in range(1, len(renko_df['histogram']))]
-    macd_colors.insert(0, 'gray')
-    
-    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-    
-    fig, axlist = mpf.plot(
-        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
-        datetime_format='%H:%M', ylabel="Price ($)",
-        addplot=[
-            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
-        ], returnfig=True
-    )
-    
-    ax = axlist[0]
-    ax.set_title(f"{symbol} - Renko Chart", fontsize=18)
-    
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    plt.close(fig)
-    
-    return buf
+    last_alert = last_alert_messages.get(symbol, "")
+
+    if df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] <= df['ema_long'].iloc[-2]:
+        return "enter_long"
+    elif df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] and df['ema_short'].iloc[-2] >= df['ema_long'].iloc[-2]:
+        return "enter_short"
+    elif last_alert == "enter_long" and df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1]:
+        return "exit_long"
+    elif last_alert == "enter_short" and df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1]:
+        return "exit_short"
+    return None
+
+# Function to send payload to 3Commas
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    payloads = [
+        {
+            "secret": config1.SECRET_1,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_1,
+        },
+        {
+            "secret": config1.SECRET_2,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_2,
+        }
+    ]
+
+    for payload in payloads:
+        try:
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+            response.raise_for_status()
+            print(f"Payload sent for {symbol} with action {action}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error sending payload for {symbol}: {e}")
 
 # Main function
 async def main():
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                df = get_historical_data(symbol, INTERVAL)
-                image_buffer = plot_renko_chart(df, symbol)
-                if image_buffer:
-                    await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
+                # Fetch historical data
+                historical_data = get_historical_data(symbol, interval)
+
+                # Determine EMA alert condition
+                action = check_ema_conditions(historical_data, symbol)
+                close_price = historical_data['Close'].iloc[-1]
+                timestamp = int(historical_data.index[-1].timestamp())
+
+                if action and last_alert_messages.get(symbol) != action:
+                    await send_3commas_payload(symbol, action, close_price, timestamp)
+                    last_alert_messages[symbol] = action
+                else:
+                    print(f"No new alert for {symbol}")
+
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
-        await asyncio.sleep(300)
 
-tg_bot = Bot(token=config.TELEGRAM_TOKEN)
+        await asyncio.sleep(900)  # Sleep duration as needed
+
+# Use nest_asyncio for Jupyter compatibility
+nest_asyncio.apply()
+
+# Create and run the event loop
 asyncio.run(main())
