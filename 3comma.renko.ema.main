@@ -84,7 +84,7 @@ def save_renko_history(renko_history):
             for brick in bricks:
                 writer.writerow({'Symbol': symbol, **brick})
 
-def convert_to_renko(symbol, df, brick_size_percent=1):
+def convert_to_renko(symbol, df, brick_size_percent=0.5):
     if len(df) < 3:
         return pd.DataFrame()
     
@@ -145,7 +145,7 @@ def plot_renko_chart(df, symbol):
     if renko_df.empty:
         return None, None, None
     
-    renko_df = renko_df[-120:]
+    renko_df = renko_df[-150:]
     
     renko_df['ema_short'] = calculate_ema(renko_df, 2)
     renko_df['ema_long'] = calculate_ema(renko_df, 26)
