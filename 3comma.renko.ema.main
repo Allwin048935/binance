@@ -9,12 +9,13 @@ import json
 import os
 from io import BytesIO
 from telegram import Bot
-import config1
+import config
 import ta
-from datetime import datetime, timezone
+from datetime import datetime
 
 INTERVAL = '1m'
 RENKO_CSV_FILE = "renko_bricks.csv"
+EMA_CSV_FILE = "ema_values.csv"
 ALERT_HISTORY_FILE = "alert_history.json"
 
 # Fetch selected symbols dynamically from Binance
@@ -33,90 +34,117 @@ except requests.exceptions.RequestException as e:
 
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey': config1.API_KEY,
-    'secret': config1.API_SECRET,
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
 })
 
 # Load alert history
-try:
-    with open(ALERT_HISTORY_FILE, "r") as file:
-        last_alert_messages = json.load(file)
-except (FileNotFoundError, json.JSONDecodeError):
-    last_alert_messages = {}
+def load_json_file(file_path):
+    try:
+        with open(file_path, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
-def save_alert_history():
-    with open(ALERT_HISTORY_FILE, "w") as file:
-        json.dump(last_alert_messages, file, indent=4)
+last_alert_messages = load_json_file(ALERT_HISTORY_FILE)
+
+def save_json_file(file_path, data):
+    with open(file_path, "w") as file:
+        json.dump(data, file, indent=4)
 
 def get_historical_data(symbol, interval, limit=3000):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-    df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-def convert_to_renko(symbol, df, brick_size_percent=0.5):
-    if len(df) < 3:
-        return pd.DataFrame()
-    
-    brick_size = df['Close'].iloc[-2] * (brick_size_percent / 100)
-    renko_bricks = []
-    last_close = df['Close'].iloc[-2]
+def load_renko_history():
+    if not os.path.exists(RENKO_CSV_FILE):
+        return {}
+    return pd.read_csv(RENKO_CSV_FILE).groupby('Symbol').apply(lambda x: x.to_dict('records')).to_dict()
 
+def save_renko_history(renko_history):
+    df = pd.concat([pd.DataFrame(bricks).assign(Symbol=symbol) for symbol, bricks in renko_history.items()])
+    df.to_csv(RENKO_CSV_FILE, index=False)
+
+def load_ema_history():
+    if not os.path.exists(EMA_CSV_FILE):
+        return {}
+    return pd.read_csv(EMA_CSV_FILE).groupby('Symbol').apply(lambda x: x.to_dict('records')).to_dict()
+
+def save_ema_history(ema_history):
+    df = pd.concat([pd.DataFrame(values).assign(Symbol=symbol) for symbol, values in ema_history.items()])
+    df.to_csv(EMA_CSV_FILE, index=False)
+
+def calculate_ema(df, period):
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
+
+def convert_to_renko(symbol, df, brick_size_percent=0.5):
+    renko_history = load_renko_history()
+    ref_close = df['Close'].iloc[-2]
+    brick_size = ref_close * (brick_size_percent / 100)
+    last_brick_close = renko_history.get(symbol, [{'Close': ref_close}])[-1]['Close']
+    new_renko_data = renko_history.get(symbol, [])
     for close in df['Close']:
-        diff = close - last_close
+        diff = close - last_brick_close
         if abs(diff) >= brick_size:
             num_bricks = int(abs(diff) // brick_size)
             direction = 1 if diff > 0 else -1
             for _ in range(num_bricks):
-                new_brick = last_close + direction * brick_size
-                renko_bricks.append({'Open': last_close, 'Close': new_brick})
-                last_close = new_brick
-
-    renko_df = pd.DataFrame(renko_bricks)
-    if not renko_df.empty:
-        renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
-    
+                new_brick_close = last_brick_close + (direction * brick_size)
+                new_renko_data.append({'Open': last_brick_close, 'Close': new_brick_close})
+                last_brick_close = new_brick_close
+    renko_history[symbol] = new_renko_data[-5000:]
+    save_renko_history(renko_history)
+    renko_df = pd.DataFrame(new_renko_data)
+    renko_df.index = pd.RangeIndex(start=0, stop=len(renko_df), step=1)  # Ensure the index is compatible
     return renko_df
-
-def calculate_ema(df, period):
-    """ Fix: Remove incorrect groupby and ensure index consistency """
-    if df.empty or 'Close' not in df:
-        return pd.Series(dtype='float64')
-    
-    ema = ta.trend.EMAIndicator(close=df['Close'], window=period).ema_indicator()
-    ema.index = df.index  # Ensure EMA index matches DataFrame index
-    return ema
 
 def detect_ema_crossover(renko_df):
     if len(renko_df) < 2:
         return None
-
     if renko_df['ema_short'].iloc[-1] > renko_df['ema_long'].iloc[-1]:
         return "Bullish Crossover"
     elif renko_df['ema_short'].iloc[-1] < renko_df['ema_long'].iloc[-1]:
         return "Bearish Crossunder"
     return None
 
+def plot_renko_chart(df, symbol):
+    renko_df = convert_to_renko(symbol, df)
+    if renko_df.empty:
+        return None, None
+    ema_history = load_ema_history()
+    renko_df['ema_short'] = calculate_ema(renko_df, 2)
+    renko_df['ema_long'] = calculate_ema(renko_df, 26)
+    ema_history[symbol] = renko_df[['Close', 'ema_short', 'ema_long']].to_dict('records')
+    save_ema_history(ema_history)
+    crossover_signal = detect_ema_crossover(renko_df)
+    if not crossover_signal:
+        return None, None
+    fig, ax = mpf.plot(renko_df, type='candle', style='charles', addplot=[
+        mpf.make_addplot(renko_df['ema_short'], color='cyan'),
+        mpf.make_addplot(renko_df['ema_long'], color='magenta')
+    ], returnfig=True)
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+    return buf, crossover_signal
+
 async def main(tg_bot):
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
                 df = get_historical_data(symbol, INTERVAL)
-                renko_df = convert_to_renko(symbol, df)
-
-                if not renko_df.empty:
-                    renko_df['ema_short'] = calculate_ema(renko_df, 2)
-                    renko_df['ema_long'] = calculate_ema(renko_df, 26)
-                    
-                    crossover_signal = detect_ema_crossover(renko_df)
-                    if crossover_signal:
-                        await tg_bot.send_message(chat_id=config1.CHAT_ID, text=f"#{symbol}: {crossover_signal}")
+                image_buffer, crossover_signal = plot_renko_chart(df, symbol)
+                if image_buffer and crossover_signal:
+                    await tg_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer, caption=f"#{symbol}: {crossover_signal}")
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
         await asyncio.sleep(30)
 
 if __name__ == "__main__":
-    tg_bot = Bot(token=config1.TELEGRAM_TOKEN)
+    tg_bot = Bot(token=config.TELEGRAM_TOKEN)
     asyncio.run(main(tg_bot))
