@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import asyncio
 import csv
+import json
 import os
 from io import BytesIO
 from telegram import Bot
