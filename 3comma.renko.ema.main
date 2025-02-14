@@ -99,7 +99,8 @@ def convert_to_renko(symbol, df, brick_size_percent=0.5):
     renko_history[symbol] = new_renko_data[-5000:]
     save_renko_history(renko_history)
     renko_df = pd.DataFrame(new_renko_data)
-    renko_df.index = pd.RangeIndex(start=0, stop=len(renko_df), step=1)  # Ensure the index is compatible
+    # Add a dummy datetime index for Renko bricks
+    renko_df.index = pd.date_range(start=df.index[-1], periods=len(renko_df), freq='T')
     return renko_df
 
 def detect_ema_crossover(renko_df):
