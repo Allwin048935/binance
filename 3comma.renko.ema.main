@@ -1,3 +1,5 @@
+i think this code ema calculation is based on latest -150 renko candles, so it calculate freshly every time when new renko candle added. It creating repainting, to prevent this calculate ema from stored renko candle data. updated full code 
+
 import requests
 import ccxt
 import pandas as pd
@@ -134,9 +136,9 @@ def detect_ema_crossover(renko_df):
     ema_short_prev, ema_long_prev = renko_df['ema_short'].iloc[-2], renko_df['ema_long'].iloc[-2]
     ema_short_curr, ema_long_curr = renko_df['ema_short'].iloc[-1], renko_df['ema_long'].iloc[-1]
 
-    if ema_short_curr > ema_long_curr:
+    if ema_short_curr > ema_long_curr and ema_short_prev < ema_long_prev:
         return "Bullish Crossover"
-    elif ema_short_curr < ema_long_curr:
+    elif ema_short_curr < ema_long_curr and ema_short_prev > ema_long_prev:
         return "Bearish Crossunder"
     return None
 
