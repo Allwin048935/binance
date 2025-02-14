@@ -1,5 +1,3 @@
-i think this code ema calculation is based on latest -150 renko candles, so it calculate freshly every time when new renko candle added. It creating repainting, to prevent this calculate ema from stored renko candle data. updated full code 
-
 import requests
 import ccxt
 import pandas as pd
