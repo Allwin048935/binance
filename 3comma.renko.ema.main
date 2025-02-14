@@ -9,7 +9,7 @@ import json
 import os
 from io import BytesIO
 from telegram import Bot
-import config1
+import  config
 import ta
 from datetime import datetime
 
@@ -34,8 +34,8 @@ except requests.exceptions.RequestException as e:
 
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey': config1.API_KEY,
-    'secret': config1.API_SECRET,
+    'apiKey':  config.API_KEY,
+    'secret':  config.API_SECRET,
 })
 
 # Load alert history
@@ -138,11 +138,11 @@ async def main(tg_bot):
                 df = get_historical_data(symbol, INTERVAL)
                 image_buffer, crossover_signal = plot_renko_chart(df, symbol)
                 if image_buffer and crossover_signal:
-                    await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol}: {crossover_signal}")
+                    await tg_bot.send_photo(chat_id= config.CHAT_ID, photo=image_buffer, caption=f"#{symbol}: {crossover_signal}")
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
         await asyncio.sleep(30)
 
 if __name__ == "__main__":
-    tg_bot = Bot(token=config1.TELEGRAM_TOKEN)
+    tg_bot = Bot(token= config.TELEGRAM_TOKEN)
     asyncio.run(main(tg_bot))
