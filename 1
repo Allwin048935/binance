@@ -13,8 +13,7 @@ import config1
 import ta
 from datetime import datetime, timezone
 
-# Constants
-INTERVAL = '3m'
+INTERVAL = '1m'
 RENKO_CSV_FILE = "renko_bricks.csv"
 ALERT_HISTORY_FILE = "alert_history.json"
 
@@ -38,63 +37,162 @@ binance = ccxt.binance({
     'secret': config1.API_SECRET,
 })
 
-# Load Renko history from CSV
+# Load alert history
+try:
+    with open(ALERT_HISTORY_FILE, "r") as file:
+        last_alert_messages = json.load(file)
+except (FileNotFoundError, json.JSONDecodeError):
+    last_alert_messages = {}
+
+def save_alert_history():
+    with open(ALERT_HISTORY_FILE, "w") as file:
+        json.dump(last_alert_messages, file, indent=4)
+
+def get_historical_data(symbol, interval, limit=300):
+    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df
+
 def load_renko_history():
-    """Loads saved Renko bricks from CSV."""
     if not os.path.exists(RENKO_CSV_FILE):
         return {}
+
     renko_history = {}
-    df = pd.read_csv(RENKO_CSV_FILE)
-    for symbol in df['Symbol'].unique():
-        renko_history[symbol] = df[df['Symbol'] == symbol][['Open', 'High', 'Low', 'Close']]
+    with open(RENKO_CSV_FILE, mode='r') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            symbol = row['Symbol']
+            if symbol not in renko_history:
+                renko_history[symbol] = []
+            renko_history[symbol].append({
+                'Open': float(row['Open']),
+                'High': float(row['High']),
+                'Low': float(row['Low']),
+                'Close': float(row['Close'])
+            })
     return renko_history
 
-# Calculate EMA from stored Renko close prices
-def calculate_ema(renko_df, period):
-    if len(renko_df) < period:
-        return pd.Series([None] * len(renko_df), index=renko_df.index)
-    return ta.trend.EMAIndicator(renko_df['Close'], window=period).ema_indicator()
+def save_renko_history(renko_history):
+    with open(RENKO_CSV_FILE, mode='w', newline='') as file:
+        fieldnames = ['Symbol', 'Open', 'High', 'Low', 'Close']
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for symbol, bricks in renko_history.items():
+            for brick in bricks:
+                writer.writerow({'Symbol': symbol, **brick})
 
-# Plot Renko Chart
-def plot_renko_chart(symbol):
+def convert_to_renko(symbol, df, brick_size_percent=1):
+    if len(df) < 3:
+        return pd.DataFrame()
+    
     renko_history = load_renko_history()
-    if symbol not in renko_history:
-        return None, None
-    renko_df = renko_history[symbol]
+    ref_close = df['Close'].iloc[-2]
+    brick_size = ref_close * (brick_size_percent / 100)
+
+    # Get last confirmed Renko brick
+    last_brick_close = renko_history.get(symbol, [{'Close': ref_close}])[-1]['Close']
+    
+    new_renko_data = renko_history.get(symbol, [])
+    
+    for i in range(1, len(df)):
+        close = df['Close'].iloc[i]
+        diff = close - last_brick_close
+
+        if abs(diff) >= brick_size:
+            num_bricks = int(abs(diff) // brick_size)
+            direction = 1 if diff > 0 else -1
+            
+            for _ in range(num_bricks):
+                new_brick_close = last_brick_close + (direction * brick_size)
+                
+                # **Fix:** Prevent duplicate bricks
+                if new_renko_data and new_renko_data[-1]['Close'] == new_brick_close:
+                    continue
+                
+                new_renko_data.append({
+                    'Open': last_brick_close,
+                    'High': max(last_brick_close, new_brick_close),
+                    'Low': min(last_brick_close, new_brick_close),
+                    'Close': new_brick_close
+                })
+                last_brick_close = new_brick_close
+
+    renko_history[symbol] = new_renko_data[-500:]  # Keep only the last 500 bricks
+    save_renko_history(renko_history)
+    
+    renko_df = pd.DataFrame(new_renko_data)
+    if not renko_df.empty:
+        renko_df.index = df.index[-len(renko_df):]  # **Fix:** Proper timestamp alignment
+    
+    return renko_df
+
+def calculate_ema(df, period):
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
+
+def detect_ema_crossover(renko_df):
+    if len(renko_df) < 2:
+        return None
+
+    ema_short_prev, ema_long_prev = renko_df['ema_short'].iloc[-3], renko_df['ema_long'].iloc[-3]
+    ema_short_curr, ema_long_curr = renko_df['ema_short'].iloc[-2], renko_df['ema_long'].iloc[-2]
+
+    if ema_short_curr > ema_long_curr and ema_short_prev < ema_long_prev:
+        return "Bullish Crossover"
+    elif ema_short_curr < ema_long_curr and ema_short_prev > ema_long_prev:
+        return "Bearish Crossunder"
+    return None
+
+def plot_renko_chart(df, symbol):
+    renko_df = convert_to_renko(symbol, df)
+    if renko_df.empty:
+        return None, None, None
+    
+    renko_df = renko_df[-120:]
+    
     renko_df['ema_short'] = calculate_ema(renko_df, 2)
     renko_df['ema_long'] = calculate_ema(renko_df, 26)
-    renko_plot_df = renko_df.iloc[-120:]  # Last 120 Renko bricks for plotting
+    
+    crossover_signal = detect_ema_crossover(renko_df)
+    if not crossover_signal:
+        return None, None, None
 
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-    
+
     fig, ax = mpf.plot(
-        renko_plot_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
+        renko_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
         datetime_format='%H:%M', ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(renko_plot_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_plot_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
         ], returnfig=True
     )
     
     ax[0].set_title(f"{symbol} - Renko Chart", fontsize=18)
+    
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
-    
-    return buf, renko_plot_df['Close'].iloc[-1]
 
-# Main Trading Loop
+    return buf, crossover_signal, renko_df['Close'].iloc[-1]
+
 async def main(tg_bot):
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                image_buffer, close_price = plot_renko_chart(symbol)
-                if image_buffer:
-                    await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol} - Renko Chart")
+                df = get_historical_data(symbol, INTERVAL)
+                image_buffer, crossover_signal, close_price = plot_renko_chart(df, symbol)
+
+                if image_buffer and crossover_signal:
+                    await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol}: {crossover_signal}")
+
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
+
         await asyncio.sleep(30)
 
 if __name__ == "__main__":
