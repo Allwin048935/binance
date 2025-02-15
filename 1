@@ -38,123 +38,36 @@ binance = ccxt.binance({
     'secret': config1.API_SECRET,
 })
 
-# Load alert history
-try:
-    with open(ALERT_HISTORY_FILE, "r") as file:
-        last_alert_messages = json.load(file)
-except (FileNotFoundError, json.JSONDecodeError):
-    last_alert_messages = {}
-
-def save_alert_history():
-    with open(ALERT_HISTORY_FILE, "w") as file:
-        json.dump(last_alert_messages, file, indent=4)
-
-def get_historical_data(symbol, interval, limit=150):
-    """Fetch OHLCV data from Binance."""
-    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-    return df
-
+# Load Renko history from CSV
 def load_renko_history():
     """Loads saved Renko bricks from CSV."""
     if not os.path.exists(RENKO_CSV_FILE):
         return {}
-    
     renko_history = {}
-    with open(RENKO_CSV_FILE, mode='r') as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            symbol = row['Symbol']
-            if symbol not in renko_history:
-                renko_history[symbol] = []
-            renko_history[symbol].append({
-                'Open': float(row['Open']),
-                'High': float(row['High']),
-                'Low': float(row['Low']),
-                'Close': float(row['Close'])
-            })
+    df = pd.read_csv(RENKO_CSV_FILE)
+    for symbol in df['Symbol'].unique():
+        renko_history[symbol] = df[df['Symbol'] == symbol][['Open', 'High', 'Low', 'Close']]
     return renko_history
 
-def save_renko_history(renko_history):
-    """Saves Renko bricks to CSV."""
-    with open(RENKO_CSV_FILE, mode='w', newline='') as file:
-        fieldnames = ['Symbol', 'Open', 'High', 'Low', 'Close']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        for symbol, bricks in renko_history.items():
-            for brick in bricks:
-                writer.writerow({'Symbol': symbol, **brick})
+# Calculate EMA from stored Renko close prices
+def calculate_ema(renko_df, period):
+    if len(renko_df) < period:
+        return pd.Series([None] * len(renko_df), index=renko_df.index)
+    return ta.trend.EMAIndicator(renko_df['Close'], window=period).ema_indicator()
 
-def convert_to_renko(symbol, df, brick_size_percent=1):
-    """Converts candlestick data into Renko bricks."""
-    if len(df) < 3:
-        return pd.DataFrame()
-
-    # Define brick size based on the previous close
-    ref_close = df['Close'].iloc[-2]
-    brick_size = ref_close * (brick_size_percent / 100)
-
-    # Load Renko history
+# Plot Renko Chart
+def plot_renko_chart(symbol):
     renko_history = load_renko_history()
-    last_brick_close = renko_history.get(symbol, [])[-1]['Close'] if renko_history.get(symbol) else ref_close
-
-    new_renko_data = renko_history.get(symbol, [])
-
-    for _, row in df.iterrows():
-        close_price = row['Close']
-        while abs(close_price - last_brick_close) >= brick_size:
-            direction = 1 if close_price > last_brick_close else -1
-            new_brick_close = last_brick_close + (direction * brick_size)
-            
-            new_renko_data.append({
-                'Open': last_brick_close,
-                'High': max(last_brick_close, new_brick_close),
-                'Low': min(last_brick_close, new_brick_close),
-                'Close': new_brick_close
-            })
-            
-            last_brick_close = new_brick_close
-
-    # Keep only the last 5000 bricks
-    renko_history[symbol] = new_renko_data[-5000:]
-    save_renko_history(renko_history)
-    
-    renko_df = pd.DataFrame(new_renko_data)
-
-    return renko_df
-
-def calculate_ema(df, period):
-    """Calculates EMA from stored Renko history (not just last 120 bricks)."""
-    if len(df) < period:
-        return pd.Series([None] * len(df), index=df.index)
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
-
-def plot_renko_chart(df, symbol):
-    """Plots Renko chart and detects EMA crossovers using stored Renko history."""
-    renko_history = load_renko_history().get(symbol, [])
-    if not renko_history:
-        return None, None, None
-
-    renko_df = pd.DataFrame(renko_history)
-
-    # Remove duplicate Renko bricks
-    renko_df = renko_df.drop_duplicates(subset=['Open', 'High', 'Low', 'Close'])
-
-    # Ensure EMA is calculated from full stored Renko data
+    if symbol not in renko_history:
+        return None, None
+    renko_df = renko_history[symbol]
     renko_df['ema_short'] = calculate_ema(renko_df, 2)
     renko_df['ema_long'] = calculate_ema(renko_df, 26)
+    renko_plot_df = renko_df.iloc[-120:]  # Last 120 Renko bricks for plotting
 
-    # Slice last 120 candles safely for plotting
-    renko_plot_df = renko_df.iloc[-min(120, len(renko_df)):]
-
-    # Market colors
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-
-    # Plot Renko chart
+    
     fig, ax = mpf.plot(
         renko_plot_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
         datetime_format='%H:%M', ylabel="Price ($)",
@@ -163,31 +76,25 @@ def plot_renko_chart(df, symbol):
             mpf.make_addplot(renko_plot_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
         ], returnfig=True
     )
-
+    
     ax[0].set_title(f"{symbol} - Renko Chart", fontsize=18)
-
-    # Save chart to buffer
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
+    
+    return buf, renko_plot_df['Close'].iloc[-1]
 
-    close_price = renko_plot_df['Close'].iloc[-1]
-    return buf, close_price
-
+# Main Trading Loop
 async def main(tg_bot):
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                df = get_historical_data(symbol, INTERVAL)
-                image_buffer, close_price = plot_renko_chart(df, symbol)
-
+                image_buffer, close_price = plot_renko_chart(symbol)
                 if image_buffer:
                     await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol} - Renko Chart")
-
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
-
         await asyncio.sleep(30)
 
 if __name__ == "__main__":
