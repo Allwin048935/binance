@@ -48,7 +48,7 @@ def save_alert_history():
     with open(ALERT_HISTORY_FILE, "w") as file:
         json.dump(last_alert_messages, file, indent=4)
 
-def get_historical_data(symbol, interval, limit=300):
+def get_historical_data(symbol, interval, limit=3000):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -59,7 +59,7 @@ def get_historical_data(symbol, interval, limit=300):
 def load_renko_history():
     if not os.path.exists(RENKO_CSV_FILE):
         return {}
-
+    
     renko_history = {}
     with open(RENKO_CSV_FILE, mode='r') as file:
         reader = csv.DictReader(file)
@@ -95,37 +95,33 @@ def convert_to_renko(symbol, df, brick_size_percent=1):
     # Get last confirmed Renko brick
     last_brick_close = renko_history.get(symbol, [{'Close': ref_close}])[-1]['Close']
     
-    new_renko_data = renko_history.get(symbol, [])
+    new_renko_data = renko_history.get(symbol, []).copy()
     
     for i in range(1, len(df)):
         close = df['Close'].iloc[i]
         diff = close - last_brick_close
-
+        
         if abs(diff) >= brick_size:
             num_bricks = int(abs(diff) // brick_size)
             direction = 1 if diff > 0 else -1
             
             for _ in range(num_bricks):
                 new_brick_close = last_brick_close + (direction * brick_size)
-                
-                # **Fix:** Prevent duplicate bricks
-                if new_renko_data and new_renko_data[-1]['Close'] == new_brick_close:
-                    continue
-                
-                new_renko_data.append({
-                    'Open': last_brick_close,
-                    'High': max(last_brick_close, new_brick_close),
-                    'Low': min(last_brick_close, new_brick_close),
-                    'Close': new_brick_close
-                })
+                if len(new_renko_data) == 0 or new_renko_data[-1]['Close'] != new_brick_close:
+                    new_renko_data.append({
+                        'Open': last_brick_close,
+                        'High': max(last_brick_close, new_brick_close),
+                        'Low': min(last_brick_close, new_brick_close),
+                        'Close': new_brick_close
+                    })
                 last_brick_close = new_brick_close
-
-    renko_history[symbol] = new_renko_data[-500:]  # Keep only the last 500 bricks
+    
+    renko_history[symbol] = new_renko_data[-5000:]  # Keep only the last 5000 bricks
     save_renko_history(renko_history)
     
     renko_df = pd.DataFrame(new_renko_data)
     if not renko_df.empty:
-        renko_df.index = df.index[-len(renko_df):]  # **Fix:** Proper timestamp alignment
+        renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
     
     return renko_df
 
@@ -133,7 +129,7 @@ def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 def detect_ema_crossover(renko_df):
-    if len(renko_df) < 2:
+    if len(renko_df) < 3:
         return None
 
     ema_short_prev, ema_long_prev = renko_df['ema_short'].iloc[-3], renko_df['ema_long'].iloc[-3]
@@ -147,7 +143,7 @@ def detect_ema_crossover(renko_df):
 
 def plot_renko_chart(df, symbol):
     renko_df = convert_to_renko(symbol, df)
-    if renko_df.empty:
+    if renko_df.empty or len(renko_df) < 3:
         return None, None, None
     
     renko_df = renko_df[-120:]
@@ -178,7 +174,8 @@ def plot_renko_chart(df, symbol):
     buf.seek(0)
     plt.close(fig)
 
-    return buf, crossover_signal, renko_df['Close'].iloc[-1]
+    close_price = renko_df['Close'].iloc[-1]
+    return buf, crossover_signal, close_price
 
 async def main(tg_bot):
     while True:
