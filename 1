@@ -13,7 +13,7 @@ import config1
 import ta
 from datetime import datetime, timezone
 
-INTERVAL = '1m'
+INTERVAL = '3m'
 RENKO_CSV_FILE = "renko_bricks.csv"
 ALERT_HISTORY_FILE = "alert_history.json"
 
@@ -84,7 +84,7 @@ def save_renko_history(renko_history):
             for brick in bricks:
                 writer.writerow({'Symbol': symbol, **brick})
 
-def convert_to_renko(symbol, df, brick_size_percent=0.25):
+def convert_to_renko(symbol, df, brick_size_percent=0.5):
     if len(df) < 3:
         return pd.DataFrame()
     
