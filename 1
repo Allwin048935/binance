@@ -84,7 +84,7 @@ def save_renko_history(renko_history):
             for brick in bricks:
                 writer.writerow({'Symbol': symbol, **brick})
 
-def convert_to_renko(symbol, df, brick_size_percent=1):
+def convert_to_renko(symbol, df, brick_size_percent=0.25):
     if len(df) < 3:
         return pd.DataFrame()
     
