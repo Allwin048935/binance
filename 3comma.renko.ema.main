@@ -218,12 +218,20 @@ async def main(tg_bot):
                 image_buffer, crossover_signal, close_price = plot_renko_chart(df, symbol)
 
                 if image_buffer and crossover_signal:
-                    await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol}: {crossover_signal}")
-                    
-                    # Send 3Commas payload based on the crossover signal
-                    timestamp = int(datetime.now(timezone.utc).timestamp())
-                    action = "enter_long" if crossover_signal == "Bullish Crossover" else "enter_short"
-                    await send_3commas_payload(symbol, action, close_price, timestamp)
+                    current_alert_message = f"#{symbol}: {crossover_signal} at {close_price}"
+                    last_alert_message = last_alert_messages.get(symbol, "")
+
+                    if current_alert_message != last_alert_message:
+                        await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=current_alert_message)
+                        
+                        # Send 3Commas payload based on the crossover signal
+                        timestamp = int(datetime.now(timezone.utc).timestamp())
+                        action = "enter_long" if crossover_signal == "Bullish Crossover" else "enter_short"
+                        await send_3commas_payload(symbol, action, close_price, timestamp)
+
+                        # Update the last alert message
+                        last_alert_messages[symbol] = current_alert_message
+                        save_alert_history()
 
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
