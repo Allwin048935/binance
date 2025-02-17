@@ -218,7 +218,7 @@ async def main(tg_bot):
                 image_buffer, crossover_signal, close_price = plot_renko_chart(df, symbol)
 
                 if image_buffer and crossover_signal:
-                    current_alert_message = f"#{symbol}: {crossover_signal} at {close_price}"
+                    current_alert_message = f"#{symbol}: {crossover_signal}"
                     last_alert_message = last_alert_messages.get(symbol, "")
 
                     if current_alert_message != last_alert_message:
