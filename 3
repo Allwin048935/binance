@@ -197,13 +197,15 @@ def plot_renko_chart(df, symbol):
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
+    # Create a figure with two axes
     fig, (ax1, ax2) = plt.subplots(nrows=2, sharex=True, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12, 8))
-    
+
+    # Plot Renko chart
     mpf.plot(
         renko_df, type='candle', ax=ax1, style=s, volume=False,
         addplot=[
-            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_short'], ax=ax1, color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_long'], ax=ax1, color='magenta', width=1.5, linestyle='-'),
         ],
         datetime_format='%H:%M', ylabel="Price ($)",
         tight_layout=True
