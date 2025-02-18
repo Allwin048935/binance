@@ -212,11 +212,17 @@ def plot_renko_chart(df, symbol):
     )
     ax1.set_title(f"{symbol} - Renko Chart", fontsize=18)
 
-    # Plot MACD histogram
+    # Plot MACD histogram with adjusted scale
     ax2.plot(renko_df.index, renko_df['macd'], color='blue', label='MACD')
     ax2.plot(renko_df.index, renko_df['macd_signal'], color='red', label='Signal')
     ax2.fill_between(renko_df.index, renko_df['macd_histogram'], 0, alpha=0.4, label='Histogram')
     ax2.axhline(y=0, color='black', linestyle='--')
+
+    # Set y-axis limits for MACD to better visualize small values
+    max_macd = max(renko_df['macd'].max(), renko_df['macd_signal'].max())
+    min_macd = min(renko_df['macd'].min(), renko_df['macd_signal'].min())
+    ax2.set_ylim(min_macd * 1.1, max_macd * 1.1)  # Adjust the scale by multiplying by 1.1 for some padding
+
     ax2.set_ylabel('MACD')
     ax2.legend(loc='upper left')
     ax2.set_xlabel('Time')
