@@ -1,202 +1,262 @@
+import requests
 import ccxt
 import pandas as pd
 import matplotlib.pyplot as plt
 import mplfinance as mpf
-from io import BytesIO
 import asyncio
-import nest_asyncio
-from telegram import Bot
-import config
-import ta
+import csv
 import json
-import requests
-import logging
+import os
+from io import BytesIO
+from telegram import Bot
+import config1
+import ta
+from datetime import datetime, timezone
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+INTERVAL = '15m'
+RENKO_CSV_FILE = "renko_bricks.csv"
+ALERT_HISTORY_FILE = "alert_history.json"
 
-# Candlestick interval
-interval = "5m"
-
-# Initialize Binance client
-binance = ccxt.binance({
-    "apiKey": config.API_KEY,
-    "secret": config.API_SECRET,
-})
-
-# Dictionary to store the last alert messages for each symbol
-last_alert_messages = {}
-
-# Load previous Renko close prices from a JSON file
-renko_history_file = "renko_history.json"
-try:
-    with open(renko_history_file, "r") as f:
-        renko_history = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    renko_history = {}
-
-# Fetch symbols dynamically from Binance Futures
+# Fetch selected symbols dynamically from Binance
 url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 try:
     response = requests.get(url)
     response.raise_for_status()
     data = response.json()
-    SELECTED_SYMBOLS = [s["symbol"] for s in data["symbols"] if s["quoteAsset"] == "USDT" and s["status"] == "TRADING"]
+    SELECTED_SYMBOLS = [
+        s['symbol'] for s in data['symbols']
+        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
+    ]
 except requests.exceptions.RequestException as e:
-    logging.error(f"Error fetching data from Binance Futures: {e}")
+    print(f"Error fetching symbols: {e}")
     SELECTED_SYMBOLS = []
 
-# Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=1500):
-    try:
-        ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+# Initialize Binance client
+binance = ccxt.binance({
+    'apiKey': config1.API_KEY,
+    'secret': config1.API_SECRET,
+})
 
-        if not ohlcv:
-            logging.error(f"No data returned for {symbol}")
-            return None
+# Load alert history
+try:
+    with open(ALERT_HISTORY_FILE, "r") as file:
+        last_alert_messages = json.load(file)
+except (FileNotFoundError, json.JSONDecodeError):
+    last_alert_messages = {}
 
-        # Create DataFrame with lowercase column names
-        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+def save_alert_history():
+    with open(ALERT_HISTORY_FILE, "w") as file:
+        json.dump(last_alert_messages, file, indent=4)
 
-        # Convert timestamp to datetime and set as index
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
+def get_historical_data(symbol, interval, limit=1000):
+    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df
 
-        return df if not df.empty else None
-    except Exception as e:
-        logging.error(f"Error fetching historical data for {symbol}: {e}")
-        return None
+def load_renko_history():
+    if not os.path.exists(RENKO_CSV_FILE):
+        return {}
+    
+    renko_history = {}
+    with open(RENKO_CSV_FILE, mode='r') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            symbol = row['Symbol']
+            if symbol not in renko_history:
+                renko_history[symbol] = []
+            renko_history[symbol].append({
+                'Open': float(row['Open']),
+                'High': float(row['High']),
+                'Low': float(row['Low']),
+                'Close': float(row['Close'])
+            })
+    return renko_history
 
-# Function to create and update Renko data
-def update_renko_data(df, symbol, percentage=1):
-    if df is None or df.empty:
-        return None
+def save_renko_history(renko_history):
+    with open(RENKO_CSV_FILE, mode='w', newline='') as file:
+        fieldnames = ['Symbol', 'Open', 'High', 'Low', 'Close']
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for symbol, bricks in renko_history.items():
+            for brick in bricks:
+                writer.writerow({'Symbol': symbol, **brick})
 
-    brick_size = percentage / 100
-    last_renko_close = renko_history.get(symbol, None)
-    renko_data = []
+def convert_to_renko(symbol, df, brick_size_percent=1):
+    if len(df) < 3:
+        return pd.DataFrame()
+    
+    renko_history = load_renko_history()
+    ref_close = df['Close'].iloc[-1]
+    brick_size = ref_close * (brick_size_percent / 100)
 
-    for index, row in df.iterrows():
-        close = row["close"]
-        if last_renko_close is None:
-            renko_data.append({"timestamp": index, "close": close})
-            last_renko_close = close
-        else:
-            while abs(close - last_renko_close) / last_renko_close >= brick_size:
-                direction = 1 if close > last_renko_close else -1
-                last_renko_close += direction * last_renko_close * brick_size
-                renko_data.append({"timestamp": index, "close": last_renko_close})
-
-    if len(renko_data) > 1:
-        renko_history[symbol] = renko_data[-2]["close"]
-
-    renko_df = pd.DataFrame(renko_data)
-
-    if len(renko_df) < 2:
-        return None
-
-    renko_df.set_index("timestamp", inplace=True)
+    # Get last confirmed Renko brick
+    last_brick_close = renko_history.get(symbol, [{'Close': ref_close}])[-1]['Close']
+    
+    new_renko_data = renko_history.get(symbol, []).copy()
+    
+    for i in range(1, len(df)):
+        close = df['Close'].iloc[i]
+        diff = close - last_brick_close
+        
+        if abs(diff) >= brick_size:
+            num_bricks = int(abs(diff) // brick_size)
+            direction = 1 if diff > 0 else -1
+            
+            for _ in range(num_bricks):
+                new_brick_close = last_brick_close + (direction * brick_size)
+                if len(new_renko_data) == 0 or new_renko_data[-1]['Close'] != new_brick_close:
+                    new_renko_data.append({
+                        'Open': last_brick_close,
+                        'High': max(last_brick_close, new_brick_close),
+                        'Low': min(last_brick_close, new_brick_close),
+                        'Close': new_brick_close
+                    })
+                last_brick_close = new_brick_close
+    
+    renko_history[symbol] = new_renko_data[-5000:]  # Keep only the last 5000 bricks
+    save_renko_history(renko_history)
+    
+    renko_df = pd.DataFrame(new_renko_data)
+    if not renko_df.empty:
+        renko_df.index = pd.date_range(start=df.index[0], periods=len(renko_df), freq='min')
+    
     return renko_df
 
-# Function to calculate EMA using ta library
 def calculate_ema(df, period):
-    if "close" not in df:
-        logging.error("Column 'close' not found in DataFrame!")
-        return None
-    return ta.trend.EMAIndicator(df["close"], window=period).ema_indicator()
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Function to check EMA cross
-def check_ema_cross(df, short_period=9, long_period=26):
-    df["ema_short"] = calculate_ema(df, short_period)
-    df["ema_long"] = calculate_ema(df, long_period)
-
-    cross_over = df["ema_short"].iloc[-2] > df["ema_long"].iloc[-2] and df["ema_short"].iloc[-3] <= df["ema_long"].iloc[-3]
-    cross_under = df["ema_short"].iloc[-2] < df["ema_long"].iloc[-2] and df["ema_short"].iloc[-3] >= df["ema_long"].iloc[-3]
-
-    return cross_over, cross_under
-
-# Function to plot Renko candles with EMA lines
-def plot_renko_candles(df, symbol, title):
-    if df is None or df.empty:
-        logging.warning(f"Skipping {symbol} - Not enough Renko data to plot.")
+def detect_ema_crossover(renko_df):
+    if len(renko_df) < 3:
         return None
 
-    mc = mpf.make_marketcolors(up="#2fc71e", down="#ed2f1a", inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=["bmh", "dark_background"], marketcolors=mc, y_on_right=True)
+    ema_short_prev, ema_long_prev = renko_df['ema_short'].iloc[-2], renko_df['ema_long'].iloc[-2]
+    ema_short_curr, ema_long_curr = renko_df['ema_short'].iloc[-1], renko_df['ema_long'].iloc[-1]
 
-    short_ema = calculate_ema(df, 9)
-    long_ema = calculate_ema(df, 26)
+    if ema_short_curr > ema_long_curr:
+        return "Bullish Crossover"
+    elif ema_short_curr < ema_long_curr:
+        return "Bearish Crossunder"
+    return None
 
-    # Temporarily rename for mplfinance
-    df_renamed = df.rename(columns={
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume"
-    })
+# Function to send payload to 3Commas
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    payloads = [
+        {
+            "secret": config1.SECRET_1,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_1,
+        },
+        {
+            "secret": config1.SECRET_2,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config1.BOT_UUID_2,
+        }
+    ]
 
-    fig, axlist = mpf.plot(
-        df_renamed,
-        figratio=(10, 6),
-        type="candle",
-        style=s,
-        tight_layout=True,
-        datetime_format="%H:%M",
-        ylabel="Price ($)",
+    for payload in payloads:
+        try:
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+            response.raise_for_status()
+            print(f"Payload sent for {symbol} with action {action}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error sending payload for {symbol}: {e}")
+
+def plot_renko_chart(df, symbol):
+    renko_df = convert_to_renko(symbol, df)
+    if renko_df.empty or len(renko_df) < 3:
+        return None, None, None
+    
+    renko_df = renko_df[-120:]
+    
+    renko_df['ema_short'] = calculate_ema(renko_df, 2)
+    renko_df['ema_long'] = calculate_ema(renko_df, 26)
+    
+    crossover_signal = detect_ema_crossover(renko_df)
+    if not crossover_signal:
+        return None, None, None
+
+    # Calculate MACD
+    macd = ta.trend.MACD(renko_df['Close'], window_slow=26, window_fast=12, window_sign=9)
+    renko_df['macd'] = macd.macd()
+    renko_df['macd_signal'] = macd.macd_signal()
+    renko_df['macd_histogram'] = macd.macd_diff()
+
+    mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
+    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+
+    fig, (ax1, ax2) = plt.subplots(nrows=2, sharex=True, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12, 8))
+    
+    mpf.plot(
+        renko_df, type='candle', ax=ax1, style=s, volume=False,
         addplot=[
-            mpf.make_addplot(short_ema, color="cyan", width=1.5, linestyle="-"),
-            mpf.make_addplot(long_ema, color="magenta", width=1.5, linestyle="-"),
+            mpf.make_addplot(renko_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
         ],
-        returnfig=True
+        datetime_format='%H:%M', ylabel="Price ($)",
+        tight_layout=True
     )
+    ax1.set_title(f"{symbol} - Renko Chart", fontsize=18)
 
-    axlist[0].set_title(f"{symbol} - {title}", fontsize=20, style="italic")
+    # Plot MACD histogram
+    ax2.plot(renko_df.index, renko_df['macd'], color='blue', label='MACD')
+    ax2.plot(renko_df.index, renko_df['macd_signal'], color='red', label='Signal')
+    ax2.fill_between(renko_df.index, renko_df['macd_histogram'], 0, alpha=0.4, label='Histogram')
+    ax2.axhline(y=0, color='black', linestyle='--')
+    ax2.set_ylabel('MACD')
+    ax2.legend(loc='upper left')
+    ax2.set_xlabel('Time')
+
+    plt.tight_layout()
 
     buf = BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
-
     plt.close(fig)
-    return buf
 
-# Function to send Telegram message
-async def send_telegram_message(symbol, message, image_buffer):
-    if last_alert_messages.get(symbol) != message:
-        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message)
-        if image_buffer:
-            await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
-        last_alert_messages[symbol] = message
+    close_price = renko_df['Close'].iloc[-1]
+    return buf, crossover_signal, close_price
 
-# Main function
-async def main():
-    global telegram_bot
-    telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
-
+async def main(tg_bot):
     while True:
         for symbol in SELECTED_SYMBOLS:
             try:
-                historical_data = get_historical_data(symbol, interval)
+                df = get_historical_data(symbol, INTERVAL)
+                image_buffer, crossover_signal, close_price = plot_renko_chart(df, symbol)
 
-                if historical_data is None:
-                    continue
+                if image_buffer and crossover_signal:
+                    current_alert_message = f"#{symbol}: {crossover_signal}"
+                    last_alert_message = last_alert_messages.get(symbol, "")
 
-                renko_data = update_renko_data(historical_data, symbol, percentage=1)
+                    if current_alert_message != last_alert_message:
+                        await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=current_alert_message)
+                        
+                        # Send 3Commas payload based on the crossover signal
+                        timestamp = int(datetime.now(timezone.utc).timestamp())
+                        action = "enter_long" if crossover_signal == "Bullish Crossover" else "enter_short"
+                        await send_3commas_payload(symbol, action, close_price, timestamp)
 
-                if renko_data is None:
-                    continue
-
-                ema_cross_over, ema_cross_under = check_ema_cross(renko_data)
-
-                if ema_cross_over:
-                    await send_telegram_message(symbol, f"/enter_long {symbol}", plot_renko_candles(renko_data, symbol, "EMA Cross Over"))
-                elif ema_cross_under:
-                    await send_telegram_message(symbol, f"/enter_short {symbol}", plot_renko_candles(renko_data, symbol, "EMA Cross Under"))
+                        # Update the last alert message
+                        last_alert_messages[symbol] = current_alert_message
+                        save_alert_history()
 
             except Exception as e:
-                logging.error(f"Error processing {symbol}: {e}")
+                print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(300)
+        await asyncio.sleep(15)
 
-nest_asyncio.apply()
-asyncio.run(main())
+if __name__ == "__main__":
+    tg_bot = Bot(token=config1.TELEGRAM_TOKEN)
+    asyncio.run(main(tg_bot))
