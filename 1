@@ -11,22 +11,21 @@ from telegram.ext import Application, CallbackQueryHandler, Update
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '2h'  # 4-hour candlestick
+interval = '30m'  # 4-hour candlestick
 fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
 
-# Fetch SELECTED_SYMBOLS dynamically from Binance
-url = "https://api.binance.com/api/v3/exchangeInfo"
+# Fetch selected symbols dynamically from Binance
+url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
+    response.raise_for_status()
     data = response.json()
-
     SELECTED_SYMBOLS = [
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
     ]
 except requests.exceptions.RequestException as e:
-    print(f"Error fetching data from Binance: {e}")
+    print(f"Error fetching symbols: {e}")
     SELECTED_SYMBOLS = []
 
 # Initialize Binance client
