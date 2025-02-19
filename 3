@@ -192,53 +192,37 @@ def plot_renko_chart(df, symbol):
     macd = ta.trend.MACD(renko_df['Close'], window_slow=26, window_fast=12, window_sign=9)
     renko_df['macd'] = macd.macd()
     renko_df['macd_signal'] = macd.macd_signal()
-    renko_df['macd_histogram'] = macd.macd_diff()
+    renko_df['histogram'] = macd.macd_diff()
 
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
-    # Create a figure with two axes
-    fig, (ax1, ax2) = plt.subplots(nrows=2, sharex=True, gridspec_kw={'height_ratios': [3, 1]}, figsize=(12, 8))
+    # Plot figure with custom ratio and return it
+    short_ema = renko_df['ema_short']
+    long_ema = renko_df['ema_long']
+    macd_colors = ['green' if x >= 0 else 'red' for x in renko_df['histogram']]
 
-    # Plot Renko chart
-    mpf.plot(
-        renko_df, type='candle', ax=ax1, style=s, volume=False,
+    fig, axlist = mpf.plot(
+        renko_df,
+        figratio=(10, 6),
+        type="candle",
+        style=s,
+        tight_layout=True,
+        datetime_format='%H:%M',
+        ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(renko_df['ema_short'], ax=ax1, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_df['ema_long'], ax=ax1, color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(renko_df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
         ],
-        datetime_format='%H:%M', ylabel="Price ($)",
-        tight_layout=True
+        returnfig=True
     )
-    ax1.set_title(f"{symbol} - Renko Chart", fontsize=18)
 
-    # Plot MACD and histogram on separate y-axes
-    ax2_macd = ax2.twinx()  # Secondary y-axis for histogram
-    ax2.plot(renko_df.index, renko_df['macd'], color='blue', label='MACD')
-    ax2.plot(renko_df.index, renko_df['macd_signal'], color='red', label='Signal')
-    
-    # Plot histogram on secondary y-axis with adjusted scale
-    ax2_macd.bar(renko_df.index, renko_df['macd_histogram'], width=0.8, color='gray', alpha=0.4, label='Histogram')
-    ax2_macd.axhline(y=0, color='black', linestyle='--')
-
-    # Adjust y-limits for better visibility
-    macd_max = max(renko_df['macd'].max(), renko_df['macd_signal'].max(), abs(renko_df['macd_histogram'].max()))
-    macd_min = min(renko_df['macd'].min(), renko_df['macd_signal'].min(), -abs(renko_df['macd_histogram'].min()))
-    padding = max(abs(macd_max), abs(macd_min)) * 0.1  # Add 10% padding
-    ax2.set_ylim(macd_min - padding, macd_max + padding)
-    ax2_macd.set_ylim(macd_min - padding, macd_max + padding)
-
-    ax2.set_ylabel('MACD')
-    ax2_macd.set_ylabel('Histogram')
-    lines1, labels1 = ax2.get_legend_handles_labels()
-    lines2, labels2 = ax2_macd.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    ax2.set_xlabel('Time')
-
-    plt.tight_layout()
+    # Customize the title
+    axlist[0].set_title(f"{symbol} - Renko Chart", fontsize=18)
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
+    fig.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
 
