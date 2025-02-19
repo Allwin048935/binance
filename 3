@@ -197,10 +197,19 @@ def plot_renko_chart(df, symbol):
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
+    # Determine histogram colors based on comparison with previous value
+    macd_colors = []
+    for i in range(len(renko_df)):
+        if i == 0:  # First bar, no previous value to compare
+            macd_colors.append('gray')  # Neutral color for first bar
+        else:
+            prev_histogram = renko_df['histogram'].iloc[i-1]
+            curr_histogram = renko_df['histogram'].iloc[i]
+            macd_colors.append('green' if curr_histogram > prev_histogram else 'red')
+
     # Plot figure with custom ratio and return it
     short_ema = renko_df['ema_short']
     long_ema = renko_df['ema_long']
-    macd_colors = ['green' if x >= 0 else 'red' for x in renko_df['histogram']]
 
     fig, axlist = mpf.plot(
         renko_df,
