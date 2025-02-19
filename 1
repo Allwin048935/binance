@@ -11,21 +11,22 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '30m'  # 4-hour candlestick
+interval = '2h'  # 4-hour candlestick
 fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
 
-# Fetch selected symbols dynamically from Binance
-url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+# Fetch SELECTED_SYMBOLS dynamically from Binance
+url = "https://api.binance.com/api/v3/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()
+    response.raise_for_status()  # Check if the request was successful
     data = response.json()
+
     SELECTED_SYMBOLS = [
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
     ]
 except requests.exceptions.RequestException as e:
-    print(f"Error fetching symbols: {e}")
+    print(f"Error fetching data from Binance: {e}")
     SELECTED_SYMBOLS = []
 
 # Initialize Binance client
@@ -38,7 +39,7 @@ binance = ccxt.binance({
 last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+def get_historical_data(symbol, interval, limit=50):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -66,9 +67,9 @@ def check_histogram_cross(df):
     calculate_ema(df, 7)  # Calculate long EMA
 
     # Check if histogram value is greater than previous (crossover)
-    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] #and df['histogram'].iloc[-2] > 0
+    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-2] > 0
     # Check if histogram value is lower than previous (crossunder)
-    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] #and df['histogram'].iloc[-2] < 0
+    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-2] < 0
 
     return cross_over, cross_under
 
@@ -157,7 +158,7 @@ def plot_candles(df, fib_df, symbol, title):
     return buf
 
 # Function to send Telegram message and image with inline buttons
-async def send_telegram_message(symbol, message, image_buffer, close_price):
+async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: str, image_buffer, close_price):
     # Create a unique key for this specific alert, including the close price to ensure uniqueness
     unique_key = f"{symbol}_{message}_{close_price}"
     if last_alert_messages.get(symbol) != unique_key:
@@ -169,8 +170,8 @@ async def send_telegram_message(symbol, message, image_buffer, close_price):
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Send message with buttons
-        await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message, reply_markup=reply_markup)
-        await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
+        await bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup)
+        await bot.send_photo(chat_id=chat_id, photo=image_buffer)
 
         last_alert_messages[symbol] = unique_key
 
@@ -220,51 +221,49 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
         except requests.exceptions.RequestException as e:
             print(f"Error sending payload for {symbol}: {e}")
 
-# Main function with Telegram polling
-async def main():
-    while True:
-        for symbol in SELECTED_SYMBOLS:
-            try:
-                # Fetch historical data
-                historical_data = get_historical_data(symbol, interval)
-                fib_data = get_historical_data(symbol, fib_interval, limit=50)
+# Job to check for alerts periodically
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    for symbol in SELECTED_SYMBOLS:
+        try:
+            # Fetch historical data
+            historical_data = get_historical_data(symbol, interval)
+            fib_data = get_historical_data(symbol, fib_interval, limit=50)
 
-                # Check histogram crossovers
-                histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
+            # Check histogram crossovers
+            histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
 
-                # Histogram cross events
-                if histogram_cross_over:
-                    message = f"Histogram Cross Over detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
-                    title = f'Histogram Cross Over for {symbol}'
-                    image_buffer = plot_candles(historical_data, fib_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer, historical_data['Close'].iloc[-1])
-                elif histogram_cross_under:
-                    message = f"Histogram Cross Under detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
-                    title = f'Histogram Cross Under for {symbol}'
-                    image_buffer = plot_candles(historical_data, fib_data, symbol, title)
-                    await send_telegram_message(symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+            # Histogram cross events
+            if histogram_cross_over:
+                message = f"Histogram Cross Over detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
+                title = f'Histogram Cross Over for {symbol}'
+                image_buffer = plot_candles(historical_data, fib_data, symbol, title)
+                await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+            elif histogram_cross_under:
+                message = f"Histogram Cross Under detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
+                title = f'Histogram Cross Under for {symbol}'
+                image_buffer = plot_candles(historical_data, fib_data, symbol, title)
+                await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
 
-            except Exception as e:
-                print(f"Error processing {symbol}: {e}")
+        except Exception as e:
+            print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(900)  # Sleep duration as needed
+# Main entry point
+def main():
+    """Start the bot."""
+    application = Application.builder().token(config.TELEGRAM_TOKEN).build()
 
-# Initialize Telegram Bot
-telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
+    # Add handlers
+    application.add_handler(CallbackQueryHandler(handle_telegram_callback))
 
-# Set up Telegram update handler
-async def on_shutdown():
-    await telegram_bot.close()
+    # Schedule the alert check job to run every 900 seconds (15 minutes)
+    application.job_queue.run_repeating(check_alerts, interval=900)
 
-# Create and run the application
-application = Application.builder().token(config.TELEGRAM_TOKEN).build()
-application.add_handler(CallbackQueryHandler(handle_telegram_callback))
+    # Start the bot
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Start the bot
-application.run_polling(allowed_updates=Update.ALL_TYPES)
+if __name__ == '__main__':
+    # Use nest_asyncio for Jupyter compatibility
+    nest_asyncio.apply()
 
-# Use nest_asyncio for Jupyter compatibility
-nest_asyncio.apply()
-
-# Run the main loop
-asyncio.run(main())
+    # Run the bot
+    main()
