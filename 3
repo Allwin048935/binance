@@ -189,7 +189,7 @@ def plot_renko_chart(df, symbol):
         return None, None, None
 
     # Calculate MACD
-    macd = ta.trend.MACD(renko_df['Close'], window_slow=26, window_fast=12, window_sign=9)
+    macd = ta.trend.MACD(renko_df['ema_short'], window_slow=26, window_fast=12, window_sign=9)
     renko_df['macd'] = macd.macd()
     renko_df['macd_signal'] = macd.macd_signal()
     renko_df['histogram'] = macd.macd_diff()
