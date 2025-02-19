@@ -181,8 +181,8 @@ def plot_renko_chart(df, symbol):
     
     renko_df = renko_df[-120:]
     
-    renko_df['ema_short'] = calculate_ema(renko_df, 2)
-    renko_df['ema_long'] = calculate_ema(renko_df, 26)
+    renko_df['ema_short'] = calculate_ema(renko_df, 3)
+    renko_df['ema_long'] = calculate_ema(renko_df, 14)
     
     crossover_signal = detect_ema_crossover(renko_df)
     if not crossover_signal:
