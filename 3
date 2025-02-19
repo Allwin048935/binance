@@ -212,19 +212,27 @@ def plot_renko_chart(df, symbol):
     )
     ax1.set_title(f"{symbol} - Renko Chart", fontsize=18)
 
-    # Plot MACD histogram with adjusted scale
+    # Plot MACD and histogram on separate y-axes
+    ax2_macd = ax2.twinx()  # Secondary y-axis for histogram
     ax2.plot(renko_df.index, renko_df['macd'], color='blue', label='MACD')
     ax2.plot(renko_df.index, renko_df['macd_signal'], color='red', label='Signal')
-    ax2.fill_between(renko_df.index, renko_df['macd_histogram'], 0, alpha=0.4, label='Histogram')
-    ax2.axhline(y=0, color='black', linestyle='--')
+    
+    # Plot histogram on secondary y-axis with adjusted scale
+    ax2_macd.bar(renko_df.index, renko_df['macd_histogram'], width=0.8, color='gray', alpha=0.4, label='Histogram')
+    ax2_macd.axhline(y=0, color='black', linestyle='--')
 
-    # Set y-axis limits for MACD to better visualize small values
-    max_macd = max(renko_df['macd'].max(), renko_df['macd_signal'].max())
-    min_macd = min(renko_df['macd'].min(), renko_df['macd_signal'].min())
-    ax2.set_ylim(min_macd * 1.1, max_macd * 1.1)  # Adjust the scale by multiplying by 1.1 for some padding
+    # Adjust y-limits for better visibility
+    macd_max = max(renko_df['macd'].max(), renko_df['macd_signal'].max(), abs(renko_df['macd_histogram'].max()))
+    macd_min = min(renko_df['macd'].min(), renko_df['macd_signal'].min(), -abs(renko_df['macd_histogram'].min()))
+    padding = max(abs(macd_max), abs(macd_min)) * 0.1  # Add 10% padding
+    ax2.set_ylim(macd_min - padding, macd_max + padding)
+    ax2_macd.set_ylim(macd_min - padding, macd_max + padding)
 
     ax2.set_ylabel('MACD')
-    ax2.legend(loc='upper left')
+    ax2_macd.set_ylabel('Histogram')
+    lines1, labels1 = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2_macd.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
     ax2.set_xlabel('Time')
 
     plt.tight_layout()
