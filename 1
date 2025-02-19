@@ -7,25 +7,25 @@ from io import BytesIO
 import asyncio
 import nest_asyncio
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, Update
 import config  # Import the config module
 import ta  # Import ta library
 
-interval = '30m'  # 4-hour candlestick
+interval = '2h'  # 4-hour candlestick
 fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
 
-# Fetch selected symbols dynamically from Binance
-url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+# Fetch SELECTED_SYMBOLS dynamically from Binance
+url = "https://api.binance.com/api/v3/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()
+    response.raise_for_status()  # Check if the request was successful
     data = response.json()
+
     SELECTED_SYMBOLS = [
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
     ]
 except requests.exceptions.RequestException as e:
-    print(f"Error fetching symbols: {e}")
+    print(f"Error fetching data from Binance: {e}")
     SELECTED_SYMBOLS = []
 
 # Initialize Binance client
@@ -34,7 +34,7 @@ binance = ccxt.binance({
     'secret': config.API_SECRET,
 })
 
-# Dictionary to store the last alert messages for each symbol, including button states
+# Dictionary to store the last alert messages for each symbol
 last_alert_messages = {}
 
 # Function to get historical candlestick data
@@ -48,10 +48,6 @@ def get_historical_data(symbol, interval, limit=50):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to calculate EMA using ta library
-def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
-
 # Function to calculate MACD using ta library
 def calculate_macd(df):
     macd = ta.trend.MACD(df['Close'])
@@ -62,8 +58,6 @@ def calculate_macd(df):
 # Function to check histogram cross (replacing EMA cross)
 def check_histogram_cross(df):
     calculate_macd(df)  # Ensure MACD and histogram are calculated
-    calculate_ema(df, 3)  # Calculate short EMA
-    calculate_ema(df, 7)  # Calculate long EMA
 
     # Check if histogram value is greater than previous (crossover)
     cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-2] > 0
@@ -88,7 +82,7 @@ def calculate_fibonacci_levels(df):
     }
     return levels
 
-# Updated function to plot candlesticks with EMA lines, MACD Histogram, and Fibonacci levels
+# Updated function to plot candlesticks with MACD Histogram and Fibonacci levels
 def plot_candles(df, fib_df, symbol, title):
     mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
 
@@ -98,9 +92,7 @@ def plot_candles(df, fib_df, symbol, title):
     # Create a custom style using the market colors and other style settings
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
 
-    # Calculate EMA and MACD values for plotting
-    short_ema = calculate_ema(df, 3)
-    long_ema = calculate_ema(df, 7)
+    # Calculate MACD values for plotting
     calculate_macd(df)
 
     # Set dynamic colors for the MACD histogram based on the comparison with the previous value
@@ -123,8 +115,6 @@ def plot_candles(df, fib_df, symbol, title):
         datetime_format='%H:%M',
         ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
             mpf.make_addplot(df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
         ],
         returnfig=True
@@ -158,13 +148,11 @@ def plot_candles(df, fib_df, symbol, title):
 
 # Function to send Telegram message and image with inline buttons
 async def send_telegram_message(symbol, message, image_buffer, close_price):
-    # Create a unique key for this specific alert, including the close price to ensure uniqueness
-    unique_key = f"{symbol}_{message}_{close_price}"
-    if last_alert_messages.get(symbol) != unique_key:
+    if last_alert_messages.get(symbol) != message:
         # Create inline keyboard with two buttons
         keyboard = [
-            [InlineKeyboardButton("enter_long", callback_data=f"enter_long_{symbol}_{close_price}")],
-            [InlineKeyboardButton("enter_short", callback_data=f"enter_short_{symbol}_{close_price}")]
+            [InlineKeyboardButton("Enter Long", callback_data=f"long_{symbol}_{close_price}")],
+            [InlineKeyboardButton("Enter Short", callback_data=f"short_{symbol}_{close_price}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -172,10 +160,10 @@ async def send_telegram_message(symbol, message, image_buffer, close_price):
         await telegram_bot.send_message(chat_id=config.CHAT_ID, text=message, reply_markup=reply_markup)
         await telegram_bot.send_photo(chat_id=config.CHAT_ID, photo=image_buffer)
 
-        last_alert_messages[symbol] = unique_key
+        last_alert_messages[symbol] = message
 
 # Function to handle Telegram callback queries (button clicks)
-async def handle_telegram_callback(update: Update):
+async def handle_telegram_callback(update):
     query = update.callback_query
     data = query.data.split('_')
     action, symbol, close_price = data[0], data[1], float(data[2])
@@ -197,7 +185,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "trigger_price": str(close_price),
             "tv_exchange": "bitget",
             "tv_instrument": symbol + '.P',
-            "action": action,  # Now directly uses "enter_long" or "enter_short"
+            "action": "long" if action == "long" else "short",
             "bot_uuid": config.BOT_UUID_1,
         },
         {
@@ -207,7 +195,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             "trigger_price": str(close_price),
             "tv_exchange": "bitget",
             "tv_instrument": symbol + '.P',
-            "action": action,  # Now directly uses "enter_long" or "enter_short"
+            "action": "long" if action == "long" else "short",
             "bot_uuid": config.BOT_UUID_2,
         }
     ]
@@ -256,8 +244,11 @@ telegram_bot = Bot(token=config.TELEGRAM_TOKEN)
 async def on_shutdown():
     await telegram_bot.close()
 
-# Create and run the application
+from telegram.ext import Application, MessageHandler, Filters, CallbackQueryHandler
+
 application = Application.builder().token(config.TELEGRAM_TOKEN).build()
+
+# Add handlers
 application.add_handler(CallbackQueryHandler(handle_telegram_callback))
 
 # Start the bot
