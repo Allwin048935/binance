@@ -145,9 +145,10 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
 
     unique_key = f"{symbol}_{message}_{close_price}"
     if last_alert_messages.get(symbol) != unique_key:
+        # Ensure price is formatted as string for callback data
         keyboard = [
-            [InlineKeyboardButton("enter_long", callback_data=f"enter_long_{symbol}_{close_price}")],
-            [InlineKeyboardButton("enter_short", callback_data=f"enter_short_{symbol}_{close_price}")]
+            [InlineKeyboardButton("Enter Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")],
+            [InlineKeyboardButton("Enter Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -159,12 +160,27 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
 # Function to handle Telegram callback queries
 async def handle_telegram_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data.split('_')
-    action, symbol, close_price = data[0], data[1], float(data[2])
+    await query.answer()  # Acknowledge the callback first
+    
+    try:
+        callback_data = query.data
+        logger.info(f"Received callback data: {callback_data}")
+        
+        # Split the callback data
+        parts = callback_data.split('_')
+        if len(parts) < 3:
+            raise ValueError(f"Invalid callback data format: {callback_data}")
+            
+        action = parts[0] + "_" + parts[1]  # Reconstruct "enter_long" or "enter_short"
+        symbol = parts[2]
+        close_price = float(parts[3]) if len(parts) > 3 else float(parts[-1])
 
-    timestamp = pd.Timestamp.now().isoformat()
-    await send_3commas_payload(symbol, action, close_price, timestamp)
-    await query.answer(f"Order {action} executed for {symbol} at {close_price}")
+        timestamp = pd.Timestamp.now().isoformat()
+        await send_3commas_payload(symbol, action, close_price, timestamp)
+        await query.edit_message_text(f"Order {action} executed for {symbol} at {close_price}")
+    except Exception as e:
+        logger.error(f"Error in callback handler: {e}")
+        await query.edit_message_text(f"Error processing your request: {str(e)}")
 
 # Function to send payload to 3Commas
 async def send_3commas_payload(symbol, action, close_price, timestamp):
