@@ -40,7 +40,6 @@ binance = ccxt.binance({
 })
 
 # Dictionary to store the last alert info for each symbol
-# Format: {symbol: {'message': str, 'timestamp': datetime}}
 last_alert_messages = {}
 
 # Minimum time between same alerts (in minutes)
@@ -67,11 +66,14 @@ def calculate_macd(df):
     df['signal'] = macd.macd_signal()
     df['histogram'] = macd.macd_diff()
 
-# Check histogram cross
-def check_histogram_cross(df):
-    calculate_macd(df)
-    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-3] < df['histogram'].iloc[-4]
-    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-3] > df['histogram'].iloc[-4]
+# Check EMA crossover/crossunder
+def check_ema_cross(df):
+    short_ema = calculate_ema(df, 3)
+    long_ema = calculate_ema(df, 7)
+    cross_over = (short_ema.iloc[-2] > long_ema.iloc[-2] and 
+                  short_ema.iloc[-3] <= long_ema.iloc[-3])
+    cross_under = (short_ema.iloc[-2] < long_ema.iloc[-2] and 
+                   short_ema.iloc[-3] >= long_ema.iloc[-3])
     return cross_over, cross_under
 
 # Calculate Fibonacci levels
@@ -144,7 +146,7 @@ def plot_candles(df, fib_df, symbol, title):
     plt.close(fig)
     return buf
 
-# Send Telegram message and image with inline buttons
+# Send Telegram message and image with inline buttons (image first, then message with buttons)
 async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: str, image_buffer, close_price):
     if image_buffer is None:
         return
@@ -158,14 +160,16 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
         current_time - last_alert.get('timestamp', datetime.min) < timedelta(minutes=ALERT_COOLDOWN)):
         return
 
+    # Send image first
+    await bot.send_photo(chat_id=chat_id, photo=image_buffer)
+    
+    # Then send message with inline buttons
     keyboard = [
         [InlineKeyboardButton("Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")],
         [InlineKeyboardButton("Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     await bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup)
-    await bot.send_photo(chat_id=chat_id, photo=image_buffer)
     
     # Update last alert info
     last_alert_messages[symbol] = {
@@ -234,16 +238,16 @@ async def check_alerts(bot: Bot):
         try:
             historical_data = get_historical_data(symbol, interval)
             fib_data = get_historical_data(symbol, fib_interval, limit=20)
-            histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
+            ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
 
-            if histogram_cross_over:
+            if ema_cross_over:
                 message = f"Buy {symbol}"
-                title = f'Histogram Cross Over for {symbol}'
+                title = f'EMA(3) Cross Over EMA(7) for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
-            elif histogram_cross_under:
+            elif ema_cross_under:
                 message = f"Sell {symbol}"
-                title = f'Histogram Cross Under for {symbol}'
+                title = f'EMA(3) Cross Under EMA(7) for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
         except Exception:
