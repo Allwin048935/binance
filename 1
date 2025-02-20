@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-interval = '2h'  # 4-hour candlestick
+interval = '15m'  # 4-hour candlestick
 fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
@@ -45,7 +45,7 @@ binance = ccxt.binance({
 last_alert_messages = {}
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=50):
+def get_historical_data(symbol, interval, limit=100):
     try:
         ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -76,9 +76,9 @@ def check_histogram_cross(df):
     calculate_macd(df)  # Ensure MACD and histogram are calculated
 
     # Check if histogram value is greater than previous (crossover)
-    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-2] > 0
+    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3]
     # Check if histogram value is lower than previous (crossunder)
-    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-2] < 0
+    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3]
 
     logger.info(f"Histogram cross check for {df.index[-1]}: Cross Over={cross_over}, Cross Under={cross_under}")
     return cross_over, cross_under
@@ -247,19 +247,19 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         try:
             # Fetch historical data
             historical_data = get_historical_data(symbol, interval)
-            fib_data = get_historical_data(symbol, fib_interval, limit=50)
+            fib_data = get_historical_data(symbol, fib_interval, limit=100)
 
             # Check histogram crossovers
             histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
 
             # Histogram cross events
             if histogram_cross_over:
-                message = f"Histogram Cross Over detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
+                message = f"Long {symbol!}"
                 title = f'Histogram Cross Over for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
             elif histogram_cross_under:
-                message = f"Histogram Cross Under detected for {symbol}! Current price: {historical_data['Close'].iloc[-1]}"
+                message = f"Short {symbol}}"
                 title = f'Histogram Cross Under for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
