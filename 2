@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 interval = '2h'  # 2-hour candlestick
-fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
+fib_interval = '12h'  # 1-day candlestick for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
 url = "https://api.binance.com/api/v3/exchangeInfo"
@@ -149,8 +149,8 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
     unique_key = f"{symbol}_{message}_{close_price}"
     if last_alert_messages.get(symbol) != unique_key:
         keyboard = [
-            [InlineKeyboardButton("Enter Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")],
-            [InlineKeyboardButton("Enter Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
+            [InlineKeyboardButton("Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")],
+            [InlineKeyboardButton("Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
