@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-interval = '15m'  # 4-hour candlestick
+interval = '15m'  # 15-minute candlestick
 fib_interval = '1d'  # 1-day candlestick for Fibonacci levels
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance
@@ -242,7 +242,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
             logger.error(f"Error sending payload for {symbol}: {e}")
 
 # Job to check for alerts periodically
-async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+async def check_alerts(bot: Bot):
     for symbol in SELECTED_SYMBOLS:
         try:
             # Fetch historical data
@@ -257,34 +257,41 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
                 message = f"Buy {symbol}"
                 title = f'Histogram Cross Over for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
-                await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+                await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
             elif histogram_cross_under:
                 message = f"Sell {symbol}"
                 title = f'Histogram Cross Under for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
-                await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+                await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
 
         except Exception as e:
             logger.error(f"Error processing {symbol}: {e}")
 
+# Async loop to run the alert check periodically
+async def run_alert_loop(application: Application):
+    bot = application.bot
+    while True:
+        await check_alerts(bot)
+        await asyncio.sleep(900)  # Wait 15 minutes (900 seconds) before the next check
+
 # Main entry point
-def main():
+async def main():
     """Start the bot."""
-    # Build the application with JobQueue enabled
+    # Build the application
     application = Application.builder().token(config.TELEGRAM_TOKEN).build()
 
     # Add handlers
     application.add_handler(CallbackQueryHandler(handle_telegram_callback))
 
-    # Schedule the alert check job to run every 900 seconds (15 minutes)
-    application.job_queue.run_repeating(check_alerts, interval=900)
+    # Start the alert loop as a separate task
+    asyncio.create_task(run_alert_loop(application))
 
     # Start the bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     # Use nest_asyncio for Jupyter compatibility
     nest_asyncio.apply()
 
     # Run the bot
-    main()
+    asyncio.run(main())
