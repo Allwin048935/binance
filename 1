@@ -30,6 +30,7 @@ try:
         s['symbol'] for s in data['symbols']
         if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
     ]
+    logger.info(f"Selected symbols: {SELECTED_SYMBOLS}")
 except requests.exceptions.RequestException as e:
     logger.error(f"Error fetching data from Binance: {e}")
     SELECTED_SYMBOLS = []
@@ -53,6 +54,7 @@ def get_historical_data(symbol, interval, limit=50):
 
         # Rename columns to match mplfinance format
         df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        logger.info(f"Fetched historical data for {symbol}: {df.shape[0]} rows")
         return df
     except Exception as e:
         logger.error(f"Error fetching historical data for {symbol}: {e}")
@@ -78,6 +80,7 @@ def check_histogram_cross(df):
     # Check if histogram value is lower than previous (crossunder)
     cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-2] < 0
 
+    logger.info(f"Histogram cross check for {df.index[-1]}: Cross Over={cross_over}, Cross Under={cross_under}")
     return cross_over, cross_under
 
 # Function to calculate Fibonacci levels
@@ -166,6 +169,7 @@ def plot_candles(df, fib_df, symbol, title):
     # Close the figure to avoid memory overflow
     plt.close(fig)
 
+    logger.info(f"Chart generated for {symbol}")
     return buf
 
 # Function to send Telegram message and image with inline buttons
@@ -189,6 +193,7 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
         await bot.send_photo(chat_id=chat_id, photo=image_buffer)
 
         last_alert_messages[symbol] = unique_key
+        logger.info(f"Telegram message sent for {symbol}")
 
 # Function to handle Telegram callback queries (button clicks)
 async def handle_telegram_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
