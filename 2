@@ -98,7 +98,7 @@ def plot_candles(df, fib_df, symbol, title):
 
     mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
-    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
+    s = mpf.make_mpf_style(base_mpl_style=['bmh', 'white_background'], marketcolors=mc, y_on_right=True)
 
     short_ema = calculate_ema(df, 3)
     long_ema = calculate_ema(df, 7)
@@ -130,7 +130,7 @@ def plot_candles(df, fib_df, symbol, title):
 
     ax = axlist[0]
     for level, price in fib_levels.items():
-        ax.axhline(price, color='yellow', linestyle='-', linewidth=2)
+        ax.axhline(price, color='blue', linestyle='-', linewidth=1)
         ax.annotate(f'{level}: {price:.2f}', xy=(1, price), xytext=(5, 0), textcoords='offset points',
                     ha='left', va='center', color='black', fontsize=8, backgroundcolor='white')
 
@@ -241,13 +241,13 @@ async def check_alerts(bot: Bot):
             ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
 
             if ema_cross_over:
-                message = f"Buy {symbol}"
-                title = f'EMA(3) Cross Over EMA(7) for {symbol}'
+                message = f"Buy #{symbol}"
+                title = f'Cross Over {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
             elif ema_cross_under:
-                message = f"Sell {symbol}"
-                title = f'EMA(3) Cross Under EMA(7) for {symbol}'
+                message = f"Sell #{symbol}"
+                title = f'Cross Down {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
         except Exception:
@@ -258,7 +258,7 @@ async def run_alert_loop(application: Application):
     bot = application.bot
     while True:
         await check_alerts(bot)
-        await asyncio.sleep(900)
+        await asyncio.sleep(600)
 
 # Main entry point
 async def main():
