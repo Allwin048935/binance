@@ -1,134 +1,248 @@
-import aiohttp
-import asyncio
+import requests
 import ccxt
 import pandas as pd
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 from io import BytesIO
-from telegram import Bot
-import config1
-import ta
-import os
+import asyncio
+import nest_asyncio
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+import config  # Import the config module
+import ta  # Import ta library
 import logging
 
-# Constants
-INTERVAL = '3m'
-RENKO_CSV_FILE = "renko_bricks.csv"
-ALERT_HISTORY_FILE = "alert_history.json"
-INTERVAL_SECONDS = 30
-
-# Logging
+# Set up logging - only show INFO level messages
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Fetch selected symbols dynamically from Binance
-async def fetch_selected_symbols():
-    url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                data = await response.json()
-                selected_symbols = [
-                    s['symbol'] for s in data['symbols']
-                    if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
-                ]
-                return selected_symbols
-    except Exception as e:
-        logger.error(f"Error fetching symbols: {e}")
-        return []
+interval = '30m'  # 15-minute candlestick
+fib_interval = '8h'  # 1-day candlestick for Fibonacci levels
+
+# Fetch SELECTED_SYMBOLS dynamically from Binance
+url = "https://api.binance.com/api/v3/exchangeInfo"
+try:
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    SELECTED_SYMBOLS = [
+        s['symbol'] for s in data['symbols']
+        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
+    ]
+except requests.exceptions.RequestException:
+    SELECTED_SYMBOLS = []
 
 # Initialize Binance client
 binance = ccxt.binance({
-    'apiKey': config1.API_KEY,
-    'secret': config1.API_SECRET,
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
 })
 
-# Load Renko history from CSV
-def load_renko_history():
-    """Loads saved Renko bricks from CSV."""
-    if not os.path.exists(RENKO_CSV_FILE):
-        return {}
-    try:
-        df = pd.read_csv(RENKO_CSV_FILE)
-        renko_history = {}
-        for symbol in df['Symbol'].unique():
-            renko_history[symbol] = df[df['Symbol'] == symbol][['Open', 'High', 'Low', 'Close']]
-        return renko_history
-    except Exception as e:
-        logger.error(f"Error loading Renko history: {e}")
-        return {}
+# Dictionary to store the last alert messages for each symbol
+last_alert_messages = {}
 
-# Calculate EMA from stored Renko close prices
-def calculate_ema(renko_df, period):
-    if renko_df is None or renko_df.empty:
-        return pd.Series([], dtype='float64')
-    if len(renko_df) < period:
-        return pd.Series([None] * len(renko_df), index=renko_df.index)
-    return ta.trend.EMAIndicator(renko_df['Close'], window=period).ema_indicator()
+# Function to get historical candlestick data
+def get_historical_data(symbol, interval, limit=100):
+    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df
 
-# Plot Renko Chart
-def plot_renko_chart(symbol):
-    renko_history = load_renko_history()
-    if symbol not in renko_history:
-        return None, None
-    renko_df = renko_history[symbol]
-    renko_df['ema_short'] = calculate_ema(renko_df, 2)
-    renko_df['ema_long'] = calculate_ema(renko_df, 26)
-    renko_plot_df = renko_df.iloc[-120:]  # Last 120 Renko bricks for plotting
+# Function to calculate EMA using ta library
+def calculate_ema(df, period):
+    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
+# Function to calculate MACD using ta library
+def calculate_macd(df):
+    macd = ta.trend.MACD(df['Close'])
+    df['macd'] = macd.macd()
+    df['signal'] = macd.macd_signal()
+    df['histogram'] = macd.macd_diff()
+
+# Function to check histogram cross
+def check_histogram_cross(df):
+    calculate_macd(df)
+    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-3] < df['histogram'].iloc[-4]
+    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-3] > df['histogram'].iloc[-4]
+    return cross_over, cross_under
+
+# Function to calculate Fibonacci levels
+def calculate_fibonacci_levels(df):
+    high_price = df['High'].max()
+    low_price = df['Low'].min()
+    diff = high_price - low_price
+    levels = {
+        '0.0%': high_price,
+        '23.6%': high_price - 0.236 * diff,
+        '38.2%': high_price - 0.382 * diff,
+        '50.0%': high_price - 0.5 * diff,
+        '61.8%': high_price - 0.618 * diff,
+        '100.0%': low_price
+    }
+    return levels
+
+# Function to plot candlesticks with EMA lines, MACD Histogram, and Fibonacci levels
+def plot_candles(df, fib_df, symbol, title):
+    if df.empty or fib_df.empty:
+        return None
+
+    mpf_data = df[['Open', 'High', 'Low', 'Close']].copy()
     mc = mpf.make_marketcolors(up='#2fc71e', down='#ed2f1a', inherit=True)
     s = mpf.make_mpf_style(base_mpl_style=['bmh', 'dark_background'], marketcolors=mc, y_on_right=True)
-    
-    fig, ax = mpf.plot(
-        renko_plot_df, figratio=(10, 6), type="candle", style=s, tight_layout=True,
-        datetime_format='%H:%M', ylabel="Price ($)",
+
+    short_ema = calculate_ema(df, 3)
+    long_ema = calculate_ema(df, 7)
+    calculate_macd(df)
+
+    macd_colors = [
+        'green' if df['histogram'].iloc[i] > df['histogram'].iloc[i - 1] else 'red'
+        for i in range(1, len(df['histogram']))
+    ]
+    macd_colors.insert(0, 'gray')
+
+    fib_levels = calculate_fibonacci_levels(fib_df)
+
+    fig, axlist = mpf.plot(
+        mpf_data,
+        figratio=(10, 6),
+        type="candle",
+        style=s,
+        tight_layout=True,
+        datetime_format='%H:%M',
+        ylabel="Price ($)",
         addplot=[
-            mpf.make_addplot(renko_plot_df['ema_short'], color='cyan', width=1.5, linestyle='-'),
-            mpf.make_addplot(renko_plot_df['ema_long'], color='magenta', width=1.5, linestyle='-'),
-        ], returnfig=True
+            mpf.make_addplot(short_ema, color='cyan', width=1.5, linestyle='-'),
+            mpf.make_addplot(long_ema, color='magenta', width=1.5, linestyle='-'),
+            mpf.make_addplot(df['histogram'], type='bar', color=macd_colors, panel=1, ylabel="MACD Histogram")
+        ],
+        returnfig=True
     )
-    
-    ax[0].set_title(f"{symbol} - Renko Chart", fontsize=18)
+
+    ax = axlist[0]
+    for level, price in fib_levels.items():
+        ax.axhline(price, color='yellow', linestyle='-', linewidth=2)
+        ax.annotate(f'{level}: {price:.2f}', xy=(1, price), xytext=(5, 0), textcoords='offset points',
+                    ha='left', va='center', color='black', fontsize=8, backgroundcolor='white')
+
+    ylim = [min(fib_levels.values()) - (0.05 * (max(fib_levels.values()) - min(fib_levels.values()))),
+            max(fib_levels.values()) + (0.05 * (max(fib_levels.values()) - min(fib_levels.values())))]
+    ax.set_ylim(ylim)
+
+    ax.set_title(f"{symbol} - {title}", fontsize=25, style='italic', fontfamily='sans-serif')
+
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight')
     buf.seek(0)
     plt.close(fig)
-    
-    return buf, renko_plot_df['Close'].iloc[-1]
+    return buf
 
-# Main Trading Loop
-async def main(tg_bot):
-    selected_symbols = await fetch_selected_symbols()
-    if not selected_symbols:
-        logger.error("No symbols selected. Exiting.")
+# Function to send Telegram message and image with inline buttons
+async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: str, image_buffer, close_price):
+    if image_buffer is None:
         return
 
-    while True:
-        for symbol in selected_symbols:
-            try:
-                image_buffer, close_price = plot_renko_chart(symbol)
-                if image_buffer is None:
-                    logger.info(f"No data available for {symbol}")
-                    continue
-                await tg_bot.send_photo(chat_id=config1.CHAT_ID, photo=image_buffer, caption=f"#{symbol} - Renko Chart")
-                image_buffer.close()
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
-        await asyncio.sleep(INTERVAL_SECONDS)
+    unique_key = f"{symbol}_{message}_{close_price}"
+    if last_alert_messages.get(symbol) != unique_key:
+        # Use consistent format: action_symbol_price
+        keyboard = [
+            [InlineKeyboardButton("enter_long", callback_data=f"enter_long_{symbol}_{close_price}")],
+            [InlineKeyboardButton("enter_short", callback_data=f"enter_short_{symbol}_{close_price}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-if __name__ == "__main__":
-    # Validate configuration
-    required_config_keys = ['API_KEY', 'API_SECRET', 'TELEGRAM_TOKEN', 'CHAT_ID']
-    for key in required_config_keys:
-        if not hasattr(config1, key):
-            raise ValueError(f"Missing required configuration key: {key}")
+        await bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup)
+        await bot.send_photo(chat_id=chat_id, photo=image_buffer)
+        last_alert_messages[symbol] = unique_key
+        logger.info(f"Telegram message sent for {symbol}")
 
-    # Initialize Telegram bot
-    tg_bot = Bot(token=config1.TELEGRAM_TOKEN)
-
-    # Run the main loop
+# Function to handle Telegram callback queries
+async def handle_telegram_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # Acknowledge the callback first
+    
     try:
-        asyncio.run(main(tg_bot))
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user.")
+        data = query.data.split('_')
+        if len(data) != 3:
+            raise ValueError("Invalid callback data format")
+            
+        action = data[0]  # enter_long or enter_short
+        symbol = data[1]  # e.g., LAYERUSDT
+        close_price = float(data[2])  # The price value
+
+        timestamp = pd.Timestamp.now().isoformat()
+        await send_3commas_payload(symbol, action, close_price, timestamp)
+        await query.edit_message_text(f"Order {action} executed for {symbol} at {close_price}")
+    except Exception as e:
+        logger.error(f"Error in callback handler: {e}")
+        await query.edit_message_text("Error processing your request")
+
+# Function to send payload to 3Commas
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    payloads = [
+        {
+            "secret": config.SECRET_1,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config.BOT_UUID_1,
+        },
+        {
+            "secret": config.SECRET_2,
+            "max_lag": "300",
+            "timestamp": timestamp,
+            "trigger_price": str(close_price),
+            "tv_exchange": "bitget",
+            "tv_instrument": symbol + '.P',
+            "action": action,
+            "bot_uuid": config.BOT_UUID_2,
+        }
+    ]
+
+    for payload in payloads:
+        response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+        response.raise_for_status()
+        logger.info(f"Payload sent for {symbol} with action {action}")
+
+# Job to check for alerts periodically
+async def check_alerts(bot: Bot):
+    for symbol in SELECTED_SYMBOLS:
+        try:
+            historical_data = get_historical_data(symbol, interval)
+            fib_data = get_historical_data(symbol, fib_interval, limit=20)
+            histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
+
+            if histogram_cross_over:
+                message = f"Buy {symbol}"
+                title = f'Histogram Cross Over for {symbol}'
+                image_buffer = plot_candles(historical_data, fib_data, symbol, title)
+                await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+            elif histogram_cross_under:
+                message = f"Sell {symbol}"
+                title = f'Histogram Cross Under for {symbol}'
+                image_buffer = plot_candles(historical_data, fib_data, symbol, title)
+                await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
+        except Exception:
+            pass
+
+# Async loop to run the alert check periodically
+async def run_alert_loop(application: Application):
+    bot = application.bot
+    while True:
+        await check_alerts(bot)
+        await asyncio.sleep(900)
+
+# Main entry point
+async def main():
+    application = Application.builder().token(config.TELEGRAM_TOKEN).build()
+    application.add_handler(CallbackQueryHandler(handle_telegram_callback))
+    asyncio.create_task(run_alert_loop(application))
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    nest_asyncio.apply()
+    asyncio.run(main())
