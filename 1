@@ -247,19 +247,19 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         try:
             # Fetch historical data
             historical_data = get_historical_data(symbol, interval)
-            fib_data = get_historical_data(symbol, fib_interval, limit=100)
+            fib_data = get_historical_data(symbol, fib_interval, limit=20)
 
             # Check histogram crossovers
             histogram_cross_over, histogram_cross_under = check_histogram_cross(historical_data)
 
             # Histogram cross events
             if histogram_cross_over:
-                message = f"Long {symbol!}"
+                message = f"Buy {symbol}"
                 title = f'Histogram Cross Over for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
             elif histogram_cross_under:
-                message = f"Short {symbol}}"
+                message = f"Sell {symbol}"
                 title = f'Histogram Cross Under for {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(context.bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
