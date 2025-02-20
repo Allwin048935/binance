@@ -152,7 +152,7 @@ def plot_candles(df, fib_df, symbol, title):
 
     # Adjust the y-axis limits to ensure at least two Fibonacci levels are visible
     ylim = [min(fib_levels.values()) - (0.05 * (max(fib_levels.values()) - min(fib_levels.values()))),
-            max(fib_levels.values()) + (0.05 * (max(fib_levels.values()) - min(fib_levels.values()))]
+            max(fib_levels.values()) + (0.05 * (max(fib_levels.values()) - min(fib_levels.values())))]
     ax.set_ylim(ylim)
 
     # Add Title
