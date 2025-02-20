@@ -149,8 +149,7 @@ async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: st
     unique_key = f"{symbol}_{message}_{close_price}"
     if last_alert_messages.get(symbol) != unique_key:
         keyboard = [
-            [InlineKeyboardButton("Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")],
-            [InlineKeyboardButton("Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
+            [InlineKeyboardButton("Long", callback_data=f"enter_long_{symbol}_{str(close_price)}")], [InlineKeyboardButton("Short", callback_data=f"enter_short_{symbol}_{str(close_price)}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
