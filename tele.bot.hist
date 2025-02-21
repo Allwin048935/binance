@@ -34,7 +34,6 @@ except requests.exceptions.RequestException as e:
     print(f"Error fetching symbols: {e}")
     SELECTED_SYMBOLS = []
 
-
 # Initialize Binance client
 binance = ccxt.binance({
     'apiKey': config.API_KEY,
@@ -45,7 +44,7 @@ binance = ccxt.binance({
 last_alert_messages = {}
 
 # Minimum time between same alerts (in minutes)
-ALERT_COOLDOWN = 120  # 2 hours
+ALERT_COOLDOWN = 240 
 
 # Fetch historical candlestick data
 def get_historical_data(symbol, interval, limit=100):
@@ -60,21 +59,22 @@ def get_historical_data(symbol, interval, limit=100):
 def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
-# Calculate MACD using short EMA (3-period) instead of close price
+# Calculate MACD using close price instead of short EMA
 def calculate_macd(df):
-    short_ema = calculate_ema(df, 1)
-    macd = ta.trend.MACD(short_ema)
+    macd = ta.trend.MACD(df['Close'])  # Changed from short_ema to df['Close']
     df['macd'] = macd.macd()
     df['signal'] = macd.macd_signal()
     df['histogram'] = macd.macd_diff()
+    return df
 
-# Check EMA crossover/crossunder
-def check_ema_cross(df):
-    short_ema = calculate_ema(df, 3)
-    long_ema = calculate_ema(df, 7)
-    cross_over = df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and df['histogram'].iloc[-3] < df['histogram'].iloc[-4]
-    cross_under = df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and df['histogram'].iloc[-3] > df['histogram'].iloc[-4]
-    return cross_over, cross_under
+# Check MACD histogram crossover/crossunder
+def check_histogram_cross(df):
+    calculate_macd(df)
+    hist_cross_over = (df['histogram'].iloc[-2] > df['histogram'].iloc[-3] and 
+                      df['histogram'].iloc[-3] <= df['histogram'].iloc[-4])
+    hist_cross_under = (df['histogram'].iloc[-2] < df['histogram'].iloc[-3] and 
+                       df['histogram'].iloc[-3] >= df['histogram'].iloc[-4])
+    return hist_cross_over, hist_cross_under
 
 # Calculate Fibonacci levels
 def calculate_fibonacci_levels(df):
@@ -146,7 +146,7 @@ def plot_candles(df, fib_df, symbol, title):
     plt.close(fig)
     return buf
 
-# Send Telegram message and image with inline buttons (image first, then message with buttons)
+# Send Telegram message and image with inline buttons
 async def send_telegram_message(bot: Bot, chat_id: str, symbol: str, message: str, image_buffer, close_price):
     if image_buffer is None:
         return
@@ -237,16 +237,16 @@ async def check_alerts(bot: Bot):
         try:
             historical_data = get_historical_data(symbol, interval)
             fib_data = get_historical_data(symbol, fib_interval, limit=20)
-            ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
+            hist_cross_over, hist_cross_under = check_histogram_cross(historical_data)
 
-            if ema_cross_over:
+            if hist_cross_over:
                 message = f"Buy #{symbol}"
-                title = f'Cross Over {symbol}'
+                title = f'Histogram Cross Over {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
-            elif ema_cross_under:
+            elif hist_cross_under:
                 message = f"Sell #{symbol}"
-                title = f'Cross Under {symbol}'
+                title = f'Histogram Cross Under {symbol}'
                 image_buffer = plot_candles(historical_data, fib_data, symbol, title)
                 await send_telegram_message(bot, config.CHAT_ID, symbol, message, image_buffer, historical_data['Close'].iloc[-1])
         except Exception:
