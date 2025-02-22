@@ -4,19 +4,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import requests
 from scipy.signal import argrelextrema
+from scipy.stats import linregress
 
-# ✅ 1️⃣ Initialize Binance API (Public Data Only)
+# ✅ 1️⃣ Fetch Data from Binance
 exchange = ccxt.binance()
 symbol = 'BTC/USDT'
 timeframe = '4h'
-limit = 500  # Fetch last 500 candles
+limit = 500
 
 ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
-# ✅ 2️⃣ Identify Swing Highs and Lows (Using Local Extrema)
-window = 5  # Sensitivity of trend detection
+# ✅ 2️⃣ Identify Swing Highs and Lows
+window = 5  
 df['swing_high'] = np.nan
 df['swing_low'] = np.nan
 
@@ -26,33 +27,58 @@ low_idxs = argrelextrema(df['low'].values, np.less, order=window)[0]
 df.loc[high_idxs, 'swing_high'] = df['high'].iloc[high_idxs]
 df.loc[low_idxs, 'swing_low'] = df['low'].iloc[low_idxs]
 
-# ✅ 3️⃣ Plot Trend Lines
+# ✅ 3️⃣ Detect and Draw Trendline Patterns
+def get_trendline(x_vals, y_vals):
+    if len(x_vals) < 2:
+        return None, None  # Need at least 2 points
+    slope, intercept, _, _, _ = linregress(x_vals, y_vals)
+    return slope, intercept
+
+# Extract Swing Highs and Lows for Trendline Detection
+swing_highs = df.dropna(subset=['swing_high'])
+swing_lows = df.dropna(subset=['swing_low'])
+
+# Calculate Trendlines
+high_slope, high_intercept = get_trendline(swing_highs.index, swing_highs['swing_high'])
+low_slope, low_intercept = get_trendline(swing_lows.index, swing_lows['swing_low'])
+
+# Generate Trendline Points
+if high_slope is not None:
+    df['high_trendline'] = df.index * high_slope + high_intercept
+if low_slope is not None:
+    df['low_trendline'] = df.index * low_slope + low_intercept
+
+# ✅ 4️⃣ Plot Trendlines and Patterns
 plt.figure(figsize=(12, 6))
 plt.plot(df['timestamp'], df['close'], label='Close Price', color='black', linewidth=1)
-
-# Plot Swing Highs & Lows
 plt.scatter(df['timestamp'], df['swing_high'], color='red', label='Swing Highs', marker='^')
 plt.scatter(df['timestamp'], df['swing_low'], color='green', label='Swing Lows', marker='v')
 
-plt.title(f'Trend Line Detection - {symbol}')
+# Plot trendlines
+if high_slope is not None:
+    plt.plot(df['timestamp'], df['high_trendline'], 'r--', label='Resistance Trendline')
+if low_slope is not None:
+    plt.plot(df['timestamp'], df['low_trendline'], 'g--', label='Support Trendline')
+
+plt.title(f'Trendline Pattern Detection - {symbol}')
 plt.xlabel('Date')
 plt.ylabel('Price')
 plt.legend()
 plt.xticks(rotation=45)
 plt.grid()
 
-# ✅ 4️⃣ Save Chart
-plot_path = "/home/ubuntu/trend_lines.png"
+# ✅ 5️⃣ Save Chart
+plot_path = "/home/ubuntu/trendline_patterns.png"
 plt.savefig(plot_path)
 plt.close()
 
-# ✅ 5️⃣ Send Image to Telegram
+# ✅ 6️⃣ Send Image to Telegram
 TOKEN = "7619077339:AAGvLzsABJRFKsv50TgI1XxMNhVvtED-E_4"
 CHAT_ID = "1385370555"
 
 url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
 files = {"photo": open(plot_path, "rb")}
-data = {"chat_id": CHAT_ID, "caption": "📈 Trend Line Analysis for BTC/USDT"}
+data = {"chat_id": CHAT_ID, "caption": "📈 Trendline Patterns Detected for BTC/USDT"}
 
 response = requests.post(url, files=files, data=data)
-print(response.json())  # Check Telegram API response
+print(response.json())
