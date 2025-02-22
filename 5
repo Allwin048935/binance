@@ -2,21 +2,20 @@ import ccxt
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import requests
 from scipy.signal import argrelextrema
 
-# Initialize Binance API (Public Data Only)
+# ✅ 1️⃣ Initialize Binance API (Public Data Only)
 exchange = ccxt.binance()
-
-# Fetch 4-hour OHLCV data for BTC/USDT
 symbol = 'BTC/USDT'
 timeframe = '4h'
-limit = 500  # Number of candles to fetch
+limit = 500  # Fetch last 500 candles
 
 ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
-# Identify Swing Highs and Lows (Using Local Extrema)
+# ✅ 2️⃣ Identify Swing Highs and Lows (Using Local Extrema)
 window = 5  # Sensitivity of trend detection
 df['swing_high'] = np.nan
 df['swing_low'] = np.nan
@@ -27,11 +26,11 @@ low_idxs = argrelextrema(df['low'].values, np.less, order=window)[0]
 df.loc[high_idxs, 'swing_high'] = df['high'].iloc[high_idxs]
 df.loc[low_idxs, 'swing_low'] = df['low'].iloc[low_idxs]
 
-# Plot Trend Lines
+# ✅ 3️⃣ Plot Trend Lines
 plt.figure(figsize=(12, 6))
 plt.plot(df['timestamp'], df['close'], label='Close Price', color='black', linewidth=1)
 
-# Plot Swing Highs and Lows
+# Plot Swing Highs & Lows
 plt.scatter(df['timestamp'], df['swing_high'], color='red', label='Swing Highs', marker='^')
 plt.scatter(df['timestamp'], df['swing_low'], color='green', label='Swing Lows', marker='v')
 
@@ -42,7 +41,18 @@ plt.legend()
 plt.xticks(rotation=45)
 plt.grid()
 
-# Save and display the plot
-plot_path = "trend_lines.png"
+# ✅ 4️⃣ Save Chart
+plot_path = "/home/ubuntu/trend_lines.png"
 plt.savefig(plot_path)
-plt.show()
+plt.close()
+
+# ✅ 5️⃣ Send Image to Telegram
+TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
+
+url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+files = {"photo": open(plot_path, "rb")}
+data = {"chat_id": CHAT_ID, "caption": "📈 Trend Line Analysis for BTC/USDT"}
+
+response = requests.post(url, files=files, data=data)
+print(response.json())  # Check Telegram API response
