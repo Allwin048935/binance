@@ -16,8 +16,8 @@ ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
-# ✅ 2️⃣ Identify Swing Highs and Lows
-window = 5  
+# ✅ 2️⃣ Identify Swing Highs and Lows (Using Local Extrema)
+window = 10  # Larger window for trendline pattern detection
 df['swing_high'] = np.nan
 df['swing_low'] = np.nan
 
@@ -27,10 +27,11 @@ low_idxs = argrelextrema(df['low'].values, np.less, order=window)[0]
 df.loc[high_idxs, 'swing_high'] = df['high'].iloc[high_idxs]
 df.loc[low_idxs, 'swing_low'] = df['low'].iloc[low_idxs]
 
-# ✅ 3️⃣ Detect and Draw Trendline Patterns
+# ✅ 3️⃣ Detect Trendline Patterns with Multiple Swing Points
 def get_trendline(x_vals, y_vals):
-    if len(x_vals) < 2:
-        return None, None  # Need at least 2 points
+    """Fits a linear trendline to the given x and y points."""
+    if len(x_vals) < 3:  # Need at least 3 points for better accuracy
+        return None, None
     slope, intercept, _, _, _ = linregress(x_vals, y_vals)
     return slope, intercept
 
@@ -38,27 +39,38 @@ def get_trendline(x_vals, y_vals):
 swing_highs = df.dropna(subset=['swing_high'])
 swing_lows = df.dropna(subset=['swing_low'])
 
-# Calculate Trendlines
-high_slope, high_intercept = get_trendline(swing_highs.index, swing_highs['swing_high'])
-low_slope, low_intercept = get_trendline(swing_lows.index, swing_lows['swing_low'])
+# Function to find multiple trendlines in different segments
+def find_multiple_trendlines(data, step=50):
+    """Splits data into segments and finds trendlines in each."""
+    trendlines = []
+    for i in range(0, len(data) - step, step // 2):  # Overlapping windows
+        segment = data.iloc[i:i+step]
+        if len(segment) < 3:
+            continue
+        x_vals = segment.index.values
+        y_vals = segment.values
+        slope, intercept = get_trendline(x_vals, y_vals)
+        if slope is not None:
+            trendlines.append((x_vals, slope * x_vals + intercept))
+    return trendlines
 
-# Generate Trendline Points
-if high_slope is not None:
-    df['high_trendline'] = df.index * high_slope + high_intercept
-if low_slope is not None:
-    df['low_trendline'] = df.index * low_slope + low_intercept
+# Find multiple support and resistance trendlines
+resistance_trendlines = find_multiple_trendlines(swing_highs['swing_high'])
+support_trendlines = find_multiple_trendlines(swing_lows['swing_low'])
 
-# ✅ 4️⃣ Plot Trendlines and Patterns
+# ✅ 4️⃣ Plot Trendlines and Detect Patterns
 plt.figure(figsize=(12, 6))
 plt.plot(df['timestamp'], df['close'], label='Close Price', color='black', linewidth=1)
 plt.scatter(df['timestamp'], df['swing_high'], color='red', label='Swing Highs', marker='^')
 plt.scatter(df['timestamp'], df['swing_low'], color='green', label='Swing Lows', marker='v')
 
-# Plot trendlines
-if high_slope is not None:
-    plt.plot(df['timestamp'], df['high_trendline'], 'r--', label='Resistance Trendline')
-if low_slope is not None:
-    plt.plot(df['timestamp'], df['low_trendline'], 'g--', label='Support Trendline')
+# Plot multiple resistance trendlines
+for x_vals, y_vals in resistance_trendlines:
+    plt.plot(df['timestamp'].iloc[x_vals], y_vals, 'r--', label='Resistance')
+
+# Plot multiple support trendlines
+for x_vals, y_vals in support_trendlines:
+    plt.plot(df['timestamp'].iloc[x_vals], y_vals, 'g--', label='Support')
 
 plt.title(f'Trendline Pattern Detection - {symbol}')
 plt.xlabel('Date')
@@ -78,7 +90,7 @@ CHAT_ID = "1385370555"
 
 url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
 files = {"photo": open(plot_path, "rb")}
-data = {"chat_id": CHAT_ID, "caption": "📈 Trendline Patterns Detected for BTC/USDT"}
+data = {"chat_id": CHAT_ID, "caption": "📈 Multi-Segment Trendline Patterns for BTC/USDT"}
 
 response = requests.post(url, files=files, data=data)
 print(response.json())
