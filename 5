@@ -16,8 +16,8 @@ ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
-# ✅ 2️⃣ Identify Pivot Highs and Lows (Similar to Pine Script)
-lookback = 4  # Similar to input_pLen in Pine Script
+# ✅ 2️⃣ Identify Pivot Highs and Lows
+lookback = 4  # Lookback range for detecting swings
 
 df['pivot_high'] = np.nan
 df['pivot_low'] = np.nan
@@ -28,17 +28,20 @@ low_idxs = argrelextrema(df['close'].values, np.less, order=lookback)[0]
 df.loc[high_idxs, 'pivot_high'] = df['close'].iloc[high_idxs]
 df.loc[low_idxs, 'pivot_low'] = df['close'].iloc[low_idxs]
 
-# ✅ 3️⃣ Store Trendlines & Update on New Pivots
+# ✅ 3️⃣ Store Trendlines (Minimum 2 Points)
 trendlines = []
 
 def add_trendline(x_vals, y_vals, trend_type):
-    """Adds a new trendline when a new pivot is detected."""
+    """Adds a straight x-line trendline between two points."""
     if len(x_vals) < 2:
         return None
     slope, intercept, _, _, _ = linregress(x_vals, y_vals)
-    trendlines.append({'x': x_vals, 'y': slope * x_vals + intercept, 'type': trend_type})
+    y_start = slope * x_vals[0] + intercept
+    y_end = slope * x_vals[-1] + intercept
+    trendlines.append({'x_start': x_vals[0], 'x_end': df.index[-1], 
+                       'y': y_end, 'type': trend_type})  # Extend to latest candle
 
-# Update trendlines dynamically
+# ✅ 4️⃣ Detect and Store Pivot-Based Trendlines
 pivot_highs = df.dropna(subset=['pivot_high'])
 pivot_lows = df.dropna(subset=['pivot_low'])
 
@@ -48,25 +51,25 @@ if len(pivot_highs) > 1:
 if len(pivot_lows) > 1:
     add_trendline(pivot_lows.index.values[-2:], pivot_lows['pivot_low'].values[-2:], 'support')
 
-# ✅ 4️⃣ Detect Breakouts
+# ✅ 5️⃣ Detect Breakouts
 last_close = df['close'].iloc[-1]
 breakout = None
 
 for tl in trendlines:
     trend_type = tl['type']
-    if trend_type == 'resistance' and last_close > tl['y'][-1]:  
+    if trend_type == 'resistance' and last_close > tl['y']:  
         breakout = "Bullish Breakout! 📈"
-    elif trend_type == 'support' and last_close < tl['y'][-1]:  
+    elif trend_type == 'support' and last_close < tl['y']:  
         breakout = "Bearish Breakout! 📉"
 
-# ✅ 5️⃣ Plot Trendlines & Breakouts
+# ✅ 6️⃣ Plot Trendlines & Breakouts
 plt.figure(figsize=(12, 6))
 plt.plot(df['timestamp'], df['close'], label='Close Price', color='black', linewidth=1)
 plt.scatter(df['timestamp'], df['pivot_high'], color='red', label='Pivot Highs', marker='^')
 plt.scatter(df['timestamp'], df['pivot_low'], color='green', label='Pivot Lows', marker='v')
 
 for tl in trendlines:
-    plt.plot(df['timestamp'].iloc[tl['x']], tl['y'], '--', label=f'{tl["type"].capitalize()} Line')
+    plt.axhline(y=tl['y'], color='blue' if tl['type'] == 'resistance' else 'orange', linestyle='--', label=f'{tl["type"].capitalize()} Line')
 
 plt.title(f'Trendline Breakout Detection - {symbol}')
 plt.xlabel('Date')
@@ -75,12 +78,12 @@ plt.legend()
 plt.xticks(rotation=45)
 plt.grid()
 
-# ✅ 6️⃣ Save Chart
+# ✅ 7️⃣ Save Chart
 plot_path = "/home/ubuntu/trendline_breakout.png"
 plt.savefig(plot_path)
 plt.close()
 
-# ✅ 7️⃣ Send Image & Breakout Alerts to Telegram
+# ✅ 8️⃣ Send Image & Breakout Alerts to Telegram
 TOKEN = "7619077339:AAGvLzsABJRFKsv50TgI1XxMNhVvtED-E_4"
 CHAT_ID = "1385370555"
 
