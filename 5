@@ -7,7 +7,7 @@ from scipy.signal import argrelextrema
 # Initialize Binance API (Public Data Only)
 exchange = ccxt.binance()
 
-# Fetch 4-hour OHLCV data for a test symbol (e.g., BTC/USDT)
+# Fetch 4-hour OHLCV data for BTC/USDT
 symbol = 'BTC/USDT'
 timeframe = '4h'
 limit = 500  # Number of candles to fetch
@@ -18,8 +18,14 @@ df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
 # Identify Swing Highs and Lows (Using Local Extrema)
 window = 5  # Sensitivity of trend detection
-df['swing_high'] = df['high'][argrelextrema(df['high'].values, np.greater, order=window)]
-df['swing_low'] = df['low'][argrelextrema(df['low'].values, np.less, order=window)]
+df['swing_high'] = np.nan
+df['swing_low'] = np.nan
+
+high_idxs = argrelextrema(df['high'].values, np.greater, order=window)[0]
+low_idxs = argrelextrema(df['low'].values, np.less, order=window)[0]
+
+df.loc[high_idxs, 'swing_high'] = df['high'].iloc[high_idxs]
+df.loc[low_idxs, 'swing_low'] = df['low'].iloc[low_idxs]
 
 # Plot Trend Lines
 plt.figure(figsize=(12, 6))
@@ -37,9 +43,6 @@ plt.xticks(rotation=45)
 plt.grid()
 
 # Save and display the plot
-plot_path = "/mnt/data/trend_lines.png"
+plot_path = "trend_lines.png"
 plt.savefig(plot_path)
 plt.show()
-
-# Output file path
-plot_path
