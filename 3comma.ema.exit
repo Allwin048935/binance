@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import ta library
 
-interval = '2h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '1d'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance Futures
 url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -50,12 +50,12 @@ def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 # Function to check EMA cross
-def check_ema_cross(df, short_period=3, long_period=7):
+def check_ema_cross(df, short_period=3, long_period=20):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
 
-    cross_over = df['ema_short'].iloc[-2] > df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
-    cross_under = df['ema_short'].iloc[-2] < df['ema_long'].iloc[-2] and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
+    cross_over = df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1] #and df['ema_short'].iloc[-3] <= df['ema_long'].iloc[-3]
+    cross_under = df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1] #and df['ema_short'].iloc[-3] >= df['ema_long'].iloc[-3]
 
     return cross_over, cross_under
 
@@ -107,9 +107,9 @@ async def main():
 
                 # EMA cross events
                 if ema_cross_over:
-                    action = 'exit_short'
+                    action = 'enter_long'
                 elif ema_cross_under:
-                    action = 'exit_long'
+                    action = 'enter_short'
                 else:
                     action = None
 
@@ -127,7 +127,7 @@ async def main():
             except Exception as e:
                 print(f"Error processing {symbol}: {e}")
 
-        await asyncio.sleep(600)  # Sleep duration as needed
+        await asyncio.sleep(1800)  # Sleep duration as needed
 
 # Use nest_asyncio for Jupyter compatibility
 nest_asyncio.apply()
