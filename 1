@@ -93,7 +93,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
 
         if attempt < 2:  # Don't sleep after the last attempt
             print(f"Waiting 300 seconds before next attempt for {symbol}...")
-            await asyncio.sleep(300)  # 300 seconds = 5 minutes
+            await asyncio.sleep(420)  # 300 seconds = 5 minutes
 
 # Main function
 async def main():
