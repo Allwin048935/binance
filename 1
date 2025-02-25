@@ -6,7 +6,7 @@ import nest_asyncio
 import config1  # Import the config module
 import ta  # Import ta library
 
-interval = '12h'  # Adjust to '4h' if you need 4-hour candlesticks
+interval = '1d'  # Adjust to '4h' if you need 4-hour candlesticks
 
 # Fetch SELECTED_SYMBOLS dynamically from Binance Futures
 url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
@@ -46,7 +46,7 @@ def calculate_ema(df, period):
     return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
 
 # Function to check EMA cross
-def check_ema_cross(df, short_period=2, long_period=20):
+def check_ema_cross(df, short_period=3, long_period=20):
     df['ema_short'] = calculate_ema(df, short_period)
     df['ema_long'] = calculate_ema(df, long_period)
 
