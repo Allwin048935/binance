@@ -38,8 +38,6 @@ def get_historical_data(symbol, interval, limit=100):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df.set_index('timestamp', inplace=True)
-
-    # Rename columns to match mplfinance format
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
@@ -57,8 +55,8 @@ def check_ema_cross(df, short_period=2, long_period=20):
 
     return cross_over, cross_under
 
-# Function to send payload to 3Commas with three attempts
-async def send_3commas_payload(symbol, action, close_price, timestamp):
+# Function to send a single payload to 3Commas
+async def send_payload_once(symbol, action, close_price, timestamp, attempt):
     payloads = [
         {
             "secret": config1.SECRET_1,
@@ -82,54 +80,63 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
         }
     ]
 
-    for attempt in range(3):  # Send three times
-        for payload in payloads:
-            try:
-                response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
-                response.raise_for_status()
-                print(f"Attempt {attempt + 1}: Payload sent for {symbol} with action {action}")
-            except requests.exceptions.RequestException as e:
-                print(f"Attempt {attempt + 1}: Error sending payload for {symbol}: {e}")
+    for payload in payloads:
+        try:
+            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
+            response.raise_for_status()
+            print(f"Attempt {attempt}: Payload sent for {symbol} with action {action}")
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt}: Error sending payload for {symbol}: {e}")
 
-        if attempt < 2:  # Don't sleep after the last attempt
+# Function to send payload three times with delays
+async def send_3commas_payload(symbol, action, close_price, timestamp):
+    for attempt in range(1, 4):  # Attempts 1, 2, 3
+        await send_payload_once(symbol, action, close_price, timestamp, attempt)
+        if attempt < 3:  # Don't sleep after the last attempt
             print(f"Waiting 300 seconds before next attempt for {symbol}...")
-            await asyncio.sleep(420)  # 300 seconds = 5 minutes
+            await asyncio.sleep(300)
+
+# Function to process a single symbol
+async def process_symbol(symbol):
+    try:
+        # Fetch historical data
+        historical_data = get_historical_data(symbol, interval)
+
+        # Check EMA crossovers
+        ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
+        close_price = historical_data['Close'].iloc[-1]
+        timestamp = int(historical_data.index[-1].timestamp())
+
+        # EMA cross events
+        if ema_cross_over:
+            action = 'enter_long'
+        elif ema_cross_under:
+            action = 'enter_short'
+        else:
+            action = None
+
+        if action:
+            # Check if the last message is the same as the current one
+            last_message = last_alert_messages.get(symbol)
+            current_message = f"{symbol}:{action}"
+
+            if last_message != current_message:
+                # Start sending payloads for this symbol without waiting here
+                asyncio.create_task(send_3commas_payload(symbol, action, close_price, timestamp))
+                last_alert_messages[symbol] = current_message
+            else:
+                print(f"Skipping duplicate message for {symbol}: {action}")
+
+    except Exception as e:
+        print(f"Error processing {symbol}: {e}")
 
 # Main function
 async def main():
     while True:
-        for symbol in SELECTED_SYMBOLS:
-            try:
-                # Fetch historical data
-                historical_data = get_historical_data(symbol, interval)
-
-                # Check EMA crossovers
-                ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
-                close_price = historical_data['Close'].iloc[-1]
-                timestamp = int(historical_data.index[-1].timestamp())
-
-                # EMA cross events
-                if ema_cross_over:
-                    action = 'enter_long'
-                elif ema_cross_under:
-                    action = 'enter_short'
-                else:
-                    action = None
-
-                if action:
-                    # Check if the last message is the same as the current one
-                    last_message = last_alert_messages.get(symbol)
-                    current_message = f"{symbol}:{action}"
-
-                    if last_message != current_message:
-                        await send_3commas_payload(symbol, action, close_price, timestamp)
-                        last_alert_messages[symbol] = current_message
-                    else:
-                        print(f"Skipping duplicate message for {symbol}: {action}")
-
-            except Exception as e:
-                print(f"Error processing {symbol}: {e}")
-
+        # Create tasks for all symbols to process concurrently
+        tasks = [process_symbol(symbol) for symbol in SELECTED_SYMBOLS]
+        await asyncio.gather(*tasks)
+        print("Finished checking all symbols, sleeping for 1800 seconds...")
         await asyncio.sleep(1800)  # Sleep duration as needed
 
 # Use nest_asyncio for Jupyter compatibility
