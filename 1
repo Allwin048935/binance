@@ -60,7 +60,7 @@ async def send_payload_once(symbol, action, close_price, timestamp, attempt):
     payloads = [
         {
             "secret": config1.SECRET_1,
-            "max_lag": "150",
+            "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "bitget",
@@ -70,7 +70,7 @@ async def send_payload_once(symbol, action, close_price, timestamp, attempt):
         },
         {
             "secret": config1.SECRET_2,
-            "max_lag": "150",
+            "max_lag": "300",
             "timestamp": timestamp,
             "trigger_price": str(close_price),
             "tv_exchange": "bitget",
@@ -94,7 +94,7 @@ async def send_3commas_payload(symbol, action, close_price, timestamp):
         await send_payload_once(symbol, action, close_price, timestamp, attempt)
         if attempt < 3:  # Don't sleep after the last attempt
             print(f"Waiting 300 seconds before next attempt for {symbol}...")
-            await asyncio.sleep(300)
+            await asyncio.sleep(420)
 
 # Function to process a single symbol
 async def process_symbol(symbol):
