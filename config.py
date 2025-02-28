@@ -31,4 +31,4 @@ SECRET_2 = "eyJhbGciOiJIUzI1NiJ9.eyJzaWduYWxzX3NvdXJjZV9pZCI6ODI4MzV9.ccZIwRRxe7
 BOT_UUID_1 = "8fb612f0-4859-43e5-bb7d-99a93785cfc2"
 BOT_UUID_2 = "94de674e-e3f6-4c9f-9cc2-4a70e9acf79d"
 
-symbols = ["BTCUSDT"]
+symbols = ["XRPUSDT"]
