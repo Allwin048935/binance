@@ -9,7 +9,7 @@ exchange = ccxt.binance({
     'secret': BINANCE_API_SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'future',  # Set the default type to futures
+        'defaultType': 'future',
     }
 })
 
@@ -17,144 +17,144 @@ exchange = ccxt.binance({
 short_ema_period = 5
 long_ema_period = 10
 
-# Track the last order type placed for each symbol
+# Track the last order type and positions
 last_order_types = {symbol: None for symbol in symbols}
 open_orders = {symbol: None for symbol in symbols}
 
 # Fixed quantity in USDT worth of contracts
 fixed_quantity_usdt = 10
 
-# Function to fetch historical data for futures with EMA calculation
 def fetch_ohlcv(symbol, timeframe, limit):
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    """Fetch historical OHLCV data and calculate EMAs"""
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['short_ema'] = calculate_ema(df, short_ema_period)
+        df['long_ema'] = calculate_ema(df, long_ema_period)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        return df
+    except Exception as e:
+        print(f"Error fetching OHLCV for {symbol}: {e}")
+        return None
 
-    # Calculate short and long EMAs
-    df['short_ema'] = calculate_ema(df, short_ema_period)
-    df['long_ema'] = calculate_ema(df, long_ema_period)
-
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    return df
-
-# Function to calculate EMA
 def calculate_ema(df, period, column='close'):
+    """Calculate Exponential Moving Average"""
     return df[column].ewm(span=period, adjust=False).mean()
 
-# Function to place a market buy order
+def get_quantity_precision(symbol):
+    """Get quantity precision for a symbol"""
+    markets = exchange.load_markets()
+    return markets[symbol]['precision']['amount']
+
 def place_market_buy_order(symbol, quantity):
+    """Place a market buy order with proper precision"""
     try:
-        order = exchange.create_market_buy_order(
-            symbol=symbol,
-            amount=quantity
-        )
+        precision = get_quantity_precision(symbol)
+        quantity = round(quantity, precision)
+        order = exchange.create_market_buy_order(symbol=symbol, amount=quantity)
         print(f"Market Buy Order placed for {symbol}: {order}")
         return order
     except Exception as e:
         print(f"Error placing Market Buy Order for {symbol}: {e}")
+        return None
 
-# Function to place a market sell order
 def place_market_sell_order(symbol, quantity):
+    """Place a market sell order with proper precision"""
     try:
-        order = exchange.create_market_sell_order(
-            symbol=symbol,
-            amount=quantity
-        )
+        precision = get_quantity_precision(symbol)
+        quantity = round(quantity, precision)
+        order = exchange.create_market_sell_order(symbol=symbol, amount=quantity)
         print(f"Market Sell Order placed for {symbol}: {order}")
         return order
     except Exception as e:
         print(f"Error placing Market Sell Order for {symbol}: {e}")
+        return None
 
-# Function to close open positions
 def close_open_position(symbol):
+    """Close any existing open position"""
     try:
         if open_orders[symbol]:
             position = exchange.fetch_position(symbol)
-            if position['side'] == 'long':
-                order = place_market_sell_order(symbol, position['positionAmt'])
-                print(f"Closing open position for {symbol}: {order}")
-            elif position['side'] == 'short':
-                order = place_market_buy_order(symbol, position['positionAmt'])
-                print(f"Closing open position for {symbol}: {order}")
+            if position['side'] == 'long' and float(position['positionAmt']) > 0:
+                order = place_market_sell_order(symbol, abs(float(position['positionAmt'])))
+                print(f"Closing long position for {symbol}: {order}")
+            elif position['side'] == 'short' and float(position['positionAmt']) > 0:
+                order = place_market_buy_order(symbol, abs(float(position['positionAmt'])))
+                print(f"Closing short position for {symbol}: {order}")
+            open_orders[symbol] = None
     except Exception as e:
         print(f"Error closing open position for {symbol}: {e}")
 
-# Function to close open orders
 def close_open_orders(symbol):
+    """Cancel any pending open orders"""
     try:
-        if open_orders[symbol]:
+        if open_orders[symbol] and 'id' in open_orders[symbol]:
             exchange.cancel_order(open_orders[symbol]['id'], symbol=symbol)
             print(f"Cancelled open order for {symbol}: {open_orders[symbol]['id']}")
+            open_orders[symbol] = None
     except Exception as e:
         print(f"Error cancelling open order for {symbol}: {e}")
 
-# Main trading function for futures
 def ema_strategy():
+    """Main trading strategy loop"""
     while True:
         try:
             for symbol in symbols:
-                # Fetch historical data for each symbol
+                # Fetch historical data
                 historical_data = fetch_ohlcv(symbol, time_interval, 100)
-
-                # Check if there's enough data for EMA calculation
-                if len(historical_data) < long_ema_period:
+                if historical_data is None or len(historical_data) < long_ema_period + 1:
                     print(f"Not enough data for {symbol}. Waiting for more data...")
                     continue
 
-                # Fetch the latest candlestick for each symbol
+                # Get latest price
                 latest_candle = exchange.fetch_ticker(symbol)
-
-                if 'close' not in latest_candle:
-                    print(f"Error: 'close' not found in the latest_candle for {symbol}")
+                if 'close' not in latest_candle or not latest_candle['close']:
+                    print(f"Error: Invalid price data for {symbol}")
                     continue
 
                 latest_close = float(latest_candle['close'])
-
-                # Check if latest_close is None
-                if latest_close is None:
-                    print(f"Error: latest_close is None for {symbol}")
+                if latest_close <= 0:
+                    print(f"Error: Invalid price ({latest_close}) for {symbol}")
                     continue
 
-                # Calculate the quantity based on the fixed USDT value
                 quantity = fixed_quantity_usdt / latest_close
-
                 print(f"Symbol: {symbol}, Latest Close: {latest_close}, Quantity: {quantity}")
 
-                # Close open positions and orders at the end of the time interval
-                close_open_position(symbol)
-                close_open_orders(symbol)
+                # Check EMA crossover conditions using last two values
+                short_ema_current = historical_data['short_ema'].iloc[-1]
+                long_ema_current = historical_data['long_ema'].iloc[-1]
+                short_ema_prev = historical_data['short_ema'].iloc[-2]
+                long_ema_prev = historical_data['long_ema'].iloc[-2]
 
-                # Make trading decisions for each symbol
-                if (
-                    df['short_ema'] > df['long_ema'] and
-                    last_order_types[symbol] != 'BUY'
-                ):
+                # Buy condition: short EMA crosses above long EMA
+                if (short_ema_current > long_ema_current and 
+                    short_ema_prev <= long_ema_prev and 
+                    last_order_types[symbol] != 'BUY'):
                     print(f'{symbol} Buy Signal (Crossover)')
-                    # Implement your buy logic here for futures
-                    # For example, place a market buy order
                     close_open_position(symbol)
                     close_open_orders(symbol)
                     open_orders[symbol] = place_market_buy_order(symbol, quantity)
-                    last_order_types[symbol] = 'BUY'
+                    if open_orders[symbol]:
+                        last_order_types[symbol] = 'BUY'
 
-                elif (
-                    df['short_ema'] < df['long_ema'] and
-                    last_order_types[symbol] != 'SELL'
-                ):
+                # Sell condition: short EMA crosses below long EMA
+                elif (short_ema_current < long_ema_current and 
+                      short_ema_prev >= long_ema_prev and 
+                      last_order_types[symbol] != 'SELL'):
                     print(f'{symbol} Sell Signal (Crossunder)')
-                    # Implement your sell logic here for futures
-                    # For example, place a market sell order
                     close_open_position(symbol)
                     close_open_orders(symbol)
                     open_orders[symbol] = place_market_sell_order(symbol, quantity)
-                    last_order_types[symbol] = 'SELL'
+                    if open_orders[symbol]:
+                        last_order_types[symbol] = 'SELL'
 
-            # Sleep for some time (e.g., 5 minutes) before checking again
             time.sleep(300)
 
         except Exception as e:
             print(f'An error occurred: {e}')
-            time.sleep(60)  # Wait for a minute before trying again
+            time.sleep(60)
 
-# Run the trading strategy
-ema_strategy()
+if __name__ == "__main__":
+    print("Starting EMA trading strategy...")
+    ema_strategy()
