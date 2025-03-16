@@ -1,318 +1,185 @@
+import requests
 import ccxt
 import pandas as pd
-import requests
-import time
-import schedule
-from config import COINEX_API_KEY, COINEX_API_SECRET, time_interval
+import config1
+import telegram
+import os
+from datetime import datetime
 
-# Trading parameters for all symbols
-trading_params = {
-    "market_type": "FUTURES",
-    "margin_mode": "isolated",
-    "leverage": 3,
-    "trade_levels": {
-        "long_take_profit": 1.02,  # 2% above entry for long
-        "long_stop_loss": 0.99,    # 1% below entry for long
-        "short_take_profit": 0.98, # 2% below entry for short
-        "short_stop_loss": 1.01    # 1% above entry for short
-    }
-}
+# Fetch SELECTED_SYMBOLS from Binance Futures
+url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+try:
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+    SELECTED_SYMBOLS = [s['symbol'] for s in data['symbols'] if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING']
+except requests.exceptions.RequestException as e:
+    print(f"Error fetching data from Binance Futures: {e}")
+    SELECTED_SYMBOLS = []
 
-# Fetch symbols dynamically from CoinEx API
-def fetch_coinex_symbols():
-    url = "https://api.coinex.com/v2/futures/market"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-        
-        symbols_info = {
-            s['market']: float(s['min_amount']) 
-            for s in data['data'] 
-            if s['quote_ccy'] == 'USDT' and s['is_market_available']
-        }
-        return symbols_info
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching symbols from CoinEx: {e}")
-        return {}
-
-# Create a CoinEx client
-exchange = ccxt.coinex({
-    'apiKey': COINEX_API_KEY,
-    'secret': COINEX_API_SECRET,
-    'options': {'defaultType': 'swap'},
-    'enableRateLimit': True
+# Initialize Binance client
+binance = ccxt.binance({
+    'apiKey': config1.API_KEY,
+    'secret': config1.API_SECRET,
+    'timeout': 30000,
+    'enableRateLimit': True,
 })
 
-# Define EMA strategy parameters
-short_ema_period = 1
-long_ema_period = 26
+# Initialize Telegram bot
+bot = telegram.Bot(token=config1.TELEGRAM_BOT_TOKEN)
 
-# Get initial symbols and their min_amounts
-symbols_info = fetch_coinex_symbols()
-symbols = list(symbols_info.keys())
+# Function to get historical data
+def get_historical_data(symbol, interval, limit):
+    ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df
 
-# Track last order types, open orders, and last signals
-last_order_types = {symbol: None for symbol in symbols}
-open_orders = {symbol: None for symbol in symbols}
-last_signals = {symbol: None for symbol in symbols}
-
-# Function to set trading parameters
-def set_trading_parameters(symbol):
+# Function to process symbol and track trades
+def process_symbol(symbol):
     try:
-        if not symbol.endswith("USDT"):
-            raise ValueError(f"Invalid symbol format: {symbol}")
-        exchange.set_leverage(trading_params['leverage'], symbol)
-        exchange.set_margin_mode(trading_params['margin_mode'], symbol, {'leverage': trading_params['leverage']})
-        print(f"Set parameters for {symbol}: Leverage {trading_params['leverage']}x, {trading_params['margin_mode']} mode")
-    except Exception as e:
-        print(f"Error setting trading parameters for {symbol}: {e}")
-        return False
-    return True
-
-# Function to calculate EMA
-def calculate_ema(df, period, column='close'):
-    return df[column].ewm(span=period, adjust=False).mean()
-
-# Function to fetch historical data
-def fetch_ohlcv(symbol, timeframe, limit):
-    try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['short_ema'] = calculate_ema(df, short_ema_period)
-        df['long_ema'] = calculate_ema(df, long_ema_period)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        return df
-    except Exception as e:
-        print(f"Error fetching OHLCV for {symbol}: {e}")
-        return None
-
-# Function to calculate quantity
-def calculate_quantity(symbol, latest_close):
-    min_amount = symbols_info.get(symbol, 0.0001)
-    quantity = min_amount * 1.01
-    return quantity
-
-# Function to check current position
-def check_position(symbol):
-    try:
-        positions = exchange.fetch_positions([symbol])
-        for pos in positions:
-            if pos['symbol'] == symbol and float(pos['contracts']) > 0:
-                return pos['side'].lower(), float(pos['contracts'])
-        return None, 0
-    except Exception as e:
-        print(f"Error checking position for {symbol}: {e}")
-        return None, 0
-
-# Function to place a market buy order with SL/TP
-def place_market_buy_order(symbol, quantity, order_num, retries=3, delay=1):
-    attempt = 0
-    while attempt < retries:
-        try:
-            if not set_trading_parameters(symbol):
-                raise Exception("Failed to set trading parameters")
-            order = exchange.create_market_buy_order(symbol, amount=quantity)
-            entry_price = float(order['price']) if order['price'] else float(exchange.fetch_ticker(symbol)['last'])
-            
-            print(f"Order #{order_num} - Market Buy Order placed for {symbol}: {order['id']}")
-            print(f"Quantity: {quantity}, Leverage: {trading_params['leverage']}x, Margin Mode: {trading_params['margin_mode']}, Entry Price: {entry_price}")
-
-            # Place Take-Profit (Sell Limit) and Stop-Loss (Buy Stop)
-            tp_price = entry_price * trading_params['trade_levels']['long_take_profit']
-            sl_price = entry_price * trading_params['trade_levels']['long_stop_loss']
-            
-            tp_order = exchange.create_order(
-                symbol, 'limit', 'sell', quantity, tp_price,
-                params={'stop_loss_type': 'last_price', 'take_profit_type': 'last_price'}
-            )
-            sl_order = exchange.create_order(
-                symbol, 'stop', 'sell', quantity, None,
-                params={'stopPrice': sl_price, 'stop_loss_type': 'last_price'}
-            )
-            
-            print(f"Take-Profit Order for {symbol}: {tp_order['id']} at {tp_price}")
-            print(f"Stop-Loss Order for {symbol}: {sl_order['id']} at {sl_price}")
-            
-            return order['id']
-        except Exception as e:
-            attempt += 1
-            print(f"Order #{order_num} - Error placing Market Buy Order for {symbol} (Attempt {attempt}/{retries}): {e}")
-            if attempt < retries:
-                print(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-    print(f"Order #{order_num} - Failed to place Market Buy Order for {symbol} after {retries} attempts.")
-    return None
-
-# Function to place a market sell order with SL/TP
-def place_market_sell_order(symbol, quantity, order_num, retries=3, delay=1):
-    attempt = 0
-    while attempt < retries:
-        try:
-            if not set_trading_parameters(symbol):
-                raise Exception("Failed to set trading parameters")
-            order = exchange.create_market_sell_order(symbol, amount=quantity)
-            entry_price = float(order['price']) if order['price'] else float(exchange.fetch_ticker(symbol)['last'])
-            
-            print(f"Order #{order_num} - Market Sell Order placed for {symbol}: {order['id']}")
-            print(f"Quantity: {quantity}, Leverage: {trading_params['leverage']}x, Margin Mode: {trading_params['margin_mode']}, Entry Price: {entry_price}")
-
-            # Place Take-Profit (Buy Limit) and Stop-Loss (Sell Stop)
-            tp_price = entry_price * trading_params['trade_levels']['short_take_profit']
-            sl_price = entry_price * trading_params['trade_levels']['short_stop_loss']
-            
-            tp_order = exchange.create_order(
-                symbol, 'limit', 'buy', quantity, tp_price,
-                params={'stop_loss_type': 'last_price', 'take_profit_type': 'last_price'}
-            )
-            sl_order = exchange.create_order(
-                symbol, 'stop', 'buy', quantity, None,
-                params={'stopPrice': sl_price, 'stop_loss_type': 'last_price'}
-            )
-            
-            print(f"Take-Profit Order for {symbol}: {tp_order['id']} at {tp_price}")
-            print(f"Stop-Loss Order for {symbol}: {sl_order['id']} at {sl_price}")
-            
-            return order['id']
-        except Exception as e:
-            attempt += 1
-            print(f"Order #{order_num} - Error placing Market Sell Order for {symbol} (Attempt {attempt}/{retries}): {e}")
-            if attempt < retries:
-                print(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-    print(f"Order #{order_num} - Failed to place Market Sell Order for {symbol} after {retries} attempts.")
-    return None
-
-# Function to cancel an open order
-def cancel_open_order(symbol, order_id):
-    try:
-        if order_id:
-            exchange.cancel_order(order_id, symbol)
-            print(f"Cancelled open order for {symbol}: {order_id}")
-    except Exception as e:
-        print(f"Error cancelling order for {symbol}: {e}")
-
-# Main trading function (runs once per scheduled call)
-def ema_strategy():
-    global symbols, symbols_info, last_order_types, open_orders, last_signals
-    
-    try:
-        # Refresh symbols list
-        symbols_info = fetch_coinex_symbols()
-        symbols = list(symbols_info.keys())
+        # Get weekly data (1 candle)
+        df_weekly = get_historical_data(symbol, '1w', 1)
+        # Get 5m data for backtesting (1 week = 7 days * 24 hours * 12 candles/hour = 2016 candles)
+        df_5m = get_historical_data(symbol, '5m', 2016)
         
-        # Update tracking dictionaries
-        last_order_types = {symbol: last_order_types.get(symbol) for symbol in symbols}
-        open_orders = {symbol: open_orders.get(symbol) for symbol in symbols}
-        last_signals = {symbol: last_signals.get(symbol) for symbol in symbols}
+        if df_weekly.empty or df_5m.empty or len(df_5m) < 1000:
+            return symbol, None, None, None, None, None
         
-        trades_placed = 0
-
-        for i, symbol in enumerate(symbols, 1):
-            symbol = symbol.upper()
-            print(f"\nProcessing pair #{i}/{len(symbols)}: {symbol}")
+        week_open = df_weekly['Open'].iloc[-1]
+        current_5m_close = df_5m['Close'].iloc[-1]
+        
+        # Determine position
+        percent_change = ((current_5m_close - week_open) / week_open) * 100
+        position = "Long" if current_5m_close > week_open else "Short"
+        
+        # Backtest simulation for full week without TP/SL
+        trades = []
+        max_profit = 0
+        entry_price = None
+        trade_start_idx = 0
+        
+        for i in range(len(df_5m)):
+            current_price = df_5m['Close'].iloc[i]
+            current_position = "Long" if current_price > week_open else "Short"
             
-            historical_data = fetch_ohlcv(symbol, time_interval, 100)
-            if historical_data is None or len(historical_data) < long_ema_period:
-                print(f"Not enough data for {symbol}. Skipping...")
-                continue
-
-            latest_candle = exchange.fetch_ticker(symbol)
-            if 'close' not in latest_candle:
-                print(f"Error: 'close' not found in latest_candle for {symbol}")
+            # If no trade is open, start one
+            if entry_price is None:
+                entry_price = current_price
+                trade_start_idx = i
                 continue
             
-            latest_close = float(latest_candle['close'])
-            if latest_close is None:
-                print(f"Error: latest_close is None for {symbol}")
-                continue
-
-            quantity = calculate_quantity(symbol, latest_close)
-            print(f"Symbol: {symbol}, Latest Close: {latest_close}, Min Amount: {symbols_info[symbol]}, Quantity: {quantity}")
-
-            # Check EMA conditions
-            if historical_data['short_ema'].iloc[-1] > historical_data['long_ema'].iloc[-1]:
-                current_signal = 'long'
-                print(f'{symbol} Potential Buy Signal (Crossover)')
-            elif historical_data['short_ema'].iloc[-1] < historical_data['long_ema'].iloc[-1]:
-                current_signal = 'short'
-                print(f'{symbol} Potential Sell Signal (Crossunder)')
-            else:
-                current_signal = None
-                print(f'{symbol} No clear signal (EMAs equal)')
-                continue
-
-            # Handle existing orders and new signals
-            if current_signal and last_signals.get(symbol) != current_signal:
-                # Step 1: Check and close existing position if conflicting
-                position_side, position_size = check_position(symbol)
-                if position_side:
-                    if (current_signal == 'long' and position_side == 'short') or \
-                       (current_signal == 'short' and position_side == 'long'):
-                        trades_placed += 1
-                        if position_side == 'short':
-                            close_order_id = place_market_buy_order(symbol, position_size, trades_placed)
-                            if close_order_id:
-                                print(f"Closed short position for {symbol} with order {close_order_id}")
-                            else:
-                                print(f"Failed to close short position for {symbol}. Skipping new order.")
-                                continue
-                        elif position_side == 'long':
-                            close_order_id = place_market_sell_order(symbol, position_size, trades_placed)
-                            if close_order_id:
-                                print(f"Closed long position for {symbol} with order {close_order_id}")
-                            else:
-                                print(f"Failed to close long position for {symbol}. Skipping new order.")
-                                continue
-                        if open_orders.get(symbol):
-                            cancel_open_order(symbol, open_orders[symbol])
-                        open_orders[symbol] = None
-                        last_order_types[symbol] = None
-
-                # Step 2: Update signal and place new order
-                last_signals[symbol] = current_signal
+            # If position changes, close previous trade and start new one
+            if (position == "Long" and current_price < week_open) or \
+               (position == "Short" and current_price > week_open):
+                if position == "Long":
+                    profit = ((current_price - entry_price) / entry_price) * 100
+                else:  # Short
+                    profit = ((entry_price - current_price) / entry_price) * 100
                 
-                if current_signal == 'long':
-                    trades_placed += 1
-                    order_id = place_market_buy_order(symbol, quantity, trades_placed)
-                    if order_id:
-                        open_orders[symbol] = order_id
-                        last_order_types[symbol] = 'BUY'
-                    else:
-                        print(f"Failed to place new buy order for {symbol} after retries.")
-                elif current_signal == 'short':
-                    trades_placed += 1
-                    order_id = place_market_sell_order(symbol, quantity, trades_placed)
-                    if order_id:
-                        open_orders[symbol] = order_id
-                        last_order_types[symbol] = 'SELL'
-                    else:
-                        print(f"Failed to place new sell order for {symbol} after retries.")
-            else:
-                print(f"{symbol} Signal unchanged or no new signal, skipping order placement")
-
-        print(f"\nCycle completed at {time.strftime('%H:%M:%S')}. Total trades placed: {trades_placed}")
-        print(f"Processed {len(symbols)} pairs. Waiting for next scheduled run...")
-
+                trades.append({
+                    'entry': entry_price,
+                    'exit': current_price,
+                    'profit': profit
+                })
+                entry_price = current_price
+                trade_start_idx = i
+                continue
+            
+            # Track max profit for current trade
+            if position == "Long":
+                current_profit = ((current_price - entry_price) / entry_price) * 100
+            else:  # Short
+                current_profit = ((entry_price - current_price) / entry_price) * 100
+            max_profit = max(max_profit, current_profit)
+        
+        # Close any open trade at the end
+        if entry_price is not None:
+            last_price = df_5m['Close'].iloc[-1]
+            if position == "Long":
+                profit = ((last_price - entry_price) / entry_price) * 100
+            else:  # Short
+                profit = ((entry_price - last_price) / entry_price) * 100
+            trades.append({
+                'entry': entry_price,
+                'exit': last_price,
+                'profit': profit
+            })
+        
+        total_trades = len(trades)
+        cumulative_profit = sum(trade['profit'] for trade in trades) if trades else 0
+        
+        return symbol, percent_change, position, max_profit, total_trades, cumulative_profit
+    
     except Exception as e:
-        print(f"An error occurred in cycle at {time.strftime('%H:%M:%S')}: {e}")
+        print(f"Error processing {symbol}: {e}")
+        return symbol, None, None, None, None, None
 
-# Schedule the strategy to run every 30 minutes
-if symbols:
-    print(f"Starting trading bot with {len(symbols)} symbols. Scheduling every 30 minutes...")
-    schedule.every(30).minutes.do(ema_strategy)
+# Function to save and send results
+async def save_and_send_results(long_positions, short_positions, long_cumulative, short_cumulative):
+    long_df = pd.DataFrame(long_positions, columns=['Symbol', 'Change %', 'Max Profit %', 'Trades', 'Cumulative Profit %'])
+    short_df = pd.DataFrame(short_positions, columns=['Symbol', 'Change %', 'Max Profit %', 'Trades', 'Cumulative Profit %'])
     
-    # Run the first cycle immediately
-    ema_strategy()
+    filename = 'trading_positions.xlsx'
+    with pd.ExcelWriter(filename) as writer:
+        long_df.to_excel(writer, sheet_name='Long Positions', index=False)
+        short_df.to_excel(writer, sheet_name='Short Positions', index=False)
+        summary_df = pd.DataFrame({
+            'Metric': ['Cumulative Long %', 'Cumulative Short %'],
+            'Value': [f"{long_cumulative:.2f}%", f"{short_cumulative:.2f}%"]
+        })
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
     
-    # Main loop to keep checking for scheduled tasks
-    while True:
-        try:
-            schedule.run_pending()
-            time.sleep(1)  # Check every second for pending tasks
-        except Exception as e:
-            print(f"Error in scheduler loop: {e}")
-            time.sleep(60)  # Wait 1 minute before retrying the scheduler
-else:
-    print("No symbols available to trade. Exiting...")
+    with open(filename, 'rb') as file:
+        await bot.send_document(
+            chat_id=config1.TELEGRAM_CHAT_ID,
+            document=file,
+            caption=f"Trading Positions - {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+    
+    os.remove(filename)
+
+# Main function
+async def main():
+    long_positions = []
+    short_positions = []
+    
+    print("Processing symbols...")
+    for symbol in SELECTED_SYMBOLS:
+        sym, percent, position, max_profit, trades, cum_profit = process_symbol(symbol)
+        if percent is not None:
+            if position == "Long":
+                long_positions.append((sym, percent, max_profit, trades, cum_profit))
+            elif position == "Short":
+                short_positions.append((sym, percent, max_profit, trades, cum_profit))
+    
+    # Calculate cumulative percentages
+    long_cumulative = sum(percent for _, percent, _, _, _ in long_positions)
+    short_cumulative = sum(percent for _, percent, _, _, _ in short_positions)
+    
+    # Sort results
+    long_positions.sort(key=lambda x: x[1], reverse=True)
+    short_positions.sort(key=lambda x: x[1], reverse=True)
+    
+    # Print results
+    print("\nLong Positions:")
+    print("Symbol | Change % | Max Profit % | Trades | Cumulative Profit %")
+    print("-" * 60)
+    for symbol, percent, max_p, trades, cum_p in long_positions:
+        print(f"{symbol:<12} | {percent:>6.2f}% | {max_p:>8.2f}% | {trades:>6} | {cum_p:>8.2f}%")
+    print(f"\nCumulative Long Positions Percentage: {long_cumulative:.2f}%")
+    
+    print("\nShort Positions:")
+    print("Symbol | Change % | Max Profit % | Trades | Cumulative Profit %")
+    print("-" * 60)
+    for symbol, percent, max_p, trades, cum_p in short_positions:
+        print(f"{symbol:<12} | {percent:>6.2f}% | {max_p:>8.2f}% | {trades:>6} | {cum_p:>8.2f}%")
+    print(f"\nCumulative Short Positions Percentage: {short_cumulative:.2f}%")
+    
+    await save_and_send_results(long_positions, short_positions, long_cumulative, short_cumulative)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
