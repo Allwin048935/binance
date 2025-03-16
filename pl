@@ -35,7 +35,7 @@ binance = ccxt.binance({
 bot = telegram.Bot(token=config1.TELEGRAM_BOT_TOKEN)
 
 # Function to get historical candlestick data
-def get_historical_data(symbol, interval='1d', limit=21):
+def get_historical_data(symbol, interval='3d', limit=21):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
