@@ -40,9 +40,7 @@ def get_historical_data(symbol, interval, limit):
 # Function to process symbol and track trades
 def process_symbol(symbol):
     try:
-        # Get weekly data (1 candle)
         df_weekly = get_historical_data(symbol, '1w', 1)
-        # Get 5m data for backtesting (1 week = 7 days * 24 hours * 12 candles/hour = 2016 candles)
         df_5m = get_historical_data(symbol, '5m', 2016)
         
         if df_weekly.empty or df_5m.empty or len(df_5m) < 1000:
@@ -51,30 +49,30 @@ def process_symbol(symbol):
         week_open = df_weekly['Open'].iloc[-1]
         current_5m_close = df_5m['Close'].iloc[-1]
         
-        # Determine position
+        # Determine final position
         percent_change = ((current_5m_close - week_open) / week_open) * 100
-        position = "Long" if current_5m_close > week_open else "Short"
+        final_position = "Long" if current_5m_close > week_open else "Short"
         
-        # Backtest simulation for full week without TP/SL
+        # Backtest simulation: Count actual crosses
         trades = []
         max_profit = 0
         entry_price = None
-        trade_start_idx = 0
+        previous_position = None
         
         for i in range(len(df_5m)):
             current_price = df_5m['Close'].iloc[i]
             current_position = "Long" if current_price > week_open else "Short"
             
-            # If no trade is open, start one
-            if entry_price is None:
+            # First candle: set initial position
+            if i == 0:
+                previous_position = current_position
                 entry_price = current_price
-                trade_start_idx = i
                 continue
             
-            # If position changes, close previous trade and start new one
-            if (position == "Long" and current_price < week_open) or \
-               (position == "Short" and current_price > week_open):
-                if position == "Long":
+            # Check for position change (cross)
+            if current_position != previous_position:
+                # Close previous trade
+                if previous_position == "Long":
                     profit = ((current_price - entry_price) / entry_price) * 100
                 else:  # Short
                     profit = ((entry_price - current_price) / entry_price) * 100
@@ -84,21 +82,23 @@ def process_symbol(symbol):
                     'exit': current_price,
                     'profit': profit
                 })
+                
+                # Start new trade
                 entry_price = current_price
-                trade_start_idx = i
-                continue
+                previous_position = current_position
             
             # Track max profit for current trade
-            if position == "Long":
-                current_profit = ((current_price - entry_price) / entry_price) * 100
-            else:  # Short
-                current_profit = ((entry_price - current_price) / entry_price) * 100
-            max_profit = max(max_profit, current_profit)
+            if entry_price is not None:
+                if current_position == "Long":
+                    current_profit = ((current_price - entry_price) / entry_price) * 100
+                else:  # Short
+                    current_profit = ((entry_price - current_price) / entry_price) * 100
+                max_profit = max(max_profit, current_profit)
         
-        # Close any open trade at the end
-        if entry_price is not None:
+        # Close final trade if open
+        if entry_price is not None and len(df_5m) > 0:
             last_price = df_5m['Close'].iloc[-1]
-            if position == "Long":
+            if previous_position == "Long":
                 profit = ((last_price - entry_price) / entry_price) * 100
             else:  # Short
                 profit = ((entry_price - last_price) / entry_price) * 100
@@ -111,7 +111,7 @@ def process_symbol(symbol):
         total_trades = len(trades)
         cumulative_profit = sum(trade['profit'] for trade in trades) if trades else 0
         
-        return symbol, percent_change, position, max_profit, total_trades, cumulative_profit
+        return symbol, percent_change, final_position, max_profit, total_trades, cumulative_profit
     
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
@@ -155,15 +155,12 @@ async def main():
             elif position == "Short":
                 short_positions.append((sym, percent, max_profit, trades, cum_profit))
     
-    # Calculate cumulative percentages
     long_cumulative = sum(percent for _, percent, _, _, _ in long_positions)
     short_cumulative = sum(percent for _, percent, _, _, _ in short_positions)
     
-    # Sort results
     long_positions.sort(key=lambda x: x[1], reverse=True)
     short_positions.sort(key=lambda x: x[1], reverse=True)
     
-    # Print results
     print("\nLong Positions:")
     print("Symbol | Change % | Max Profit % | Trades | Cumulative Profit %")
     print("-" * 60)
