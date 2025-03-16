@@ -1,24 +1,18 @@
 import requests
 import ccxt
 import pandas as pd
-import asyncio
-import nest_asyncio
-import config1  # Import the config module
-import ta  # Import ta library
+import config1
+import telegram
+import os
+from datetime import datetime
 
-interval = '1d'  # Adjust to '4h' if you need 4-hour candlesticks
-
-# Fetch SELECTED_SYMBOLS dynamically from Binance Futures
+# Fetch SELECTED_SYMBOLS from Binance Futures
 url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 try:
     response = requests.get(url)
-    response.raise_for_status()  # Check if the request was successful
+    response.raise_for_status()
     data = response.json()
-
-    SELECTED_SYMBOLS = [
-        s['symbol'] for s in data['symbols']
-        if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING'
-    ]
+    SELECTED_SYMBOLS = [s['symbol'] for s in data['symbols'] if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING']
 except requests.exceptions.RequestException as e:
     print(f"Error fetching data from Binance Futures: {e}")
     SELECTED_SYMBOLS = []
@@ -27,13 +21,15 @@ except requests.exceptions.RequestException as e:
 binance = ccxt.binance({
     'apiKey': config1.API_KEY,
     'secret': config1.API_SECRET,
+    'timeout': 30000,
+    'enableRateLimit': True,
 })
 
-# Dictionary to track the last alert message sent for each symbol
-last_alert_messages = {}
+# Initialize Telegram bot
+bot = telegram.Bot(token=config1.TELEGRAM_BOT_TOKEN)
 
-# Function to get historical candlestick data
-def get_historical_data(symbol, interval, limit=100):
+# Function to get historical data
+def get_historical_data(symbol, interval, limit):
     ohlcv = binance.fetch_ohlcv(symbol, interval, limit=limit)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -41,106 +37,135 @@ def get_historical_data(symbol, interval, limit=100):
     df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
     return df
 
-# Function to calculate EMA using ta library
-def calculate_ema(df, period):
-    return ta.trend.EMAIndicator(df['Close'], window=period).ema_indicator()
-
-# Function to check EMA cross
-def check_ema_cross(df, short_period=3, long_period=20):
-    df['ema_short'] = calculate_ema(df, short_period)
-    df['ema_long'] = calculate_ema(df, long_period)
-
-    cross_over = df['ema_short'].iloc[-1] > df['ema_long'].iloc[-1]
-    cross_under = df['ema_short'].iloc[-1] < df['ema_long'].iloc[-1]
-
-    return cross_over, cross_under
-
-# Function to send a single payload to 3Commas
-async def send_payload_once(symbol, action, close_price, timestamp, attempt):
-    payloads = [
-        {
-            "secret": config1.SECRET_1,
-            "max_lag": "300",
-            "timestamp": timestamp,
-            "trigger_price": str(close_price),
-            "tv_exchange": "bitget",
-            "tv_instrument": symbol + '.P',
-            "action": action,
-            "bot_uuid": config1.BOT_UUID_1,
-        },
-        {
-            "secret": config1.SECRET_2,
-            "max_lag": "300",
-            "timestamp": timestamp,
-            "trigger_price": str(close_price),
-            "tv_exchange": "bitget",
-            "tv_instrument": symbol + '.P',
-            "action": action,
-            "bot_uuid": config1.BOT_UUID_2,
-        }
-    ]
-
-    for payload in payloads:
-        try:
-            response = requests.post('https://api.3commas.io/signal_bots/webhooks', json=payload)
-            response.raise_for_status()
-            print(f"Attempt {attempt}: Payload sent for {symbol} with action {action}")
-        except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt}: Error sending payload for {symbol}: {e}")
-
-# Function to send payload three times with delays
-async def send_3commas_payload(symbol, action, close_price, timestamp):
-    for attempt in range(1, 4):  # Attempts 1, 2, 3
-        await send_payload_once(symbol, action, close_price, timestamp, attempt)
-        if attempt < 3:  # Don't sleep after the last attempt
-            print(f"Waiting 300 seconds before next attempt for {symbol}...")
-            await asyncio.sleep(420)
-
-# Function to process a single symbol
-async def process_symbol(symbol):
+# Function to process symbol and track trades
+def process_symbol(symbol):
     try:
-        # Fetch historical data
-        historical_data = get_historical_data(symbol, interval)
-
-        # Check EMA crossovers
-        ema_cross_over, ema_cross_under = check_ema_cross(historical_data)
-        close_price = historical_data['Close'].iloc[-1]
-        timestamp = int(historical_data.index[-1].timestamp())
-
-        # EMA cross events
-        if ema_cross_over:
-            action = 'enter_long'
-        elif ema_cross_under:
-            action = 'enter_short'
-        else:
-            action = None
-
-        if action:
-            # Check if the last message is the same as the current one
-            last_message = last_alert_messages.get(symbol)
-            current_message = f"{symbol}:{action}"
-
-            if last_message != current_message:
-                # Start sending payloads for this symbol without waiting here
-                asyncio.create_task(send_3commas_payload(symbol, action, close_price, timestamp))
-                last_alert_messages[symbol] = current_message
-            else:
-                print(f"Skipping duplicate message for {symbol}: {action}")
-
+        # Get weekly data (1 candle)
+        df_weekly = get_historical_data(symbol, '1w', 1)
+        # Get 5m data for backtesting (1 week = 7 days * 24 hours * 12 candles/hour = 2016 candles)
+        df_5m = get_historical_data(symbol, '5m', 2016)
+        
+        if df_weekly.empty or df_5m.empty or len(df_5m) < 1000:  # Ensure we have enough data
+            return symbol, None, None, None, None, None
+        
+        week_open = df_weekly['Open'].iloc[-1]
+        current_5m_close = df_5m['Close'].iloc[-1]
+        
+        # Determine position
+        percent_change = ((current_5m_close - week_open) / week_open) * 100
+        position = "Long" if current_5m_close > week_open else "Short"
+        
+        # Backtest simulation for full week
+        trades = []
+        max_profit = 0
+        entry_price = None
+        
+        for i in range(len(df_5m)):
+            current_price = df_5m['Close'].iloc[i]
+            
+            # Entry logic
+            if entry_price is None:
+                if position == "Long" and current_price > week_open:
+                    entry_price = current_price
+                elif position == "Short" and current_price < week_open:
+                    entry_price = current_price
+            
+            # Track max profit and exit
+            if entry_price:
+                if position == "Long":
+                    current_profit = ((current_price - entry_price) / entry_price) * 100
+                    max_profit = max(max_profit, current_profit)
+                    # Exit condition (2% take profit or 1% stop loss)
+                    if current_profit >= 2 or current_profit <= -1:
+                        trades.append({
+                            'entry': entry_price,
+                            'exit': current_price,
+                            'profit': current_profit
+                        })
+                        entry_price = None
+                else:  # Short
+                    current_profit = ((entry_price - current_price) / entry_price) * 100
+                    max_profit = max(max_profit, current_profit)
+                    if current_profit >= 2 or current_profit <= -1:
+                        trades.append({
+                            'entry': entry_price,
+                            'exit': current_price,
+                            'profit': current_profit
+                        })
+                        entry_price = None
+        
+        total_trades = len(trades)
+        cumulative_profit = sum(trade['profit'] for trade in trades) if trades else 0
+        
+        return symbol, percent_change, position, max_profit, total_trades, cumulative_profit
+    
     except Exception as e:
         print(f"Error processing {symbol}: {e}")
+        return symbol, None, None, None, None, None
+
+# Function to save and send results
+async def save_and_send_results(long_positions, short_positions, long_cumulative, short_cumulative):
+    long_df = pd.DataFrame(long_positions, columns=['Symbol', 'Change %', 'Max Profit %', 'Trades', 'Cumulative Profit %'])
+    short_df = pd.DataFrame(short_positions, columns=['Symbol', 'Change %', 'Max Profit %', 'Trades', 'Cumulative Profit %'])
+    
+    filename = 'trading_positions.xlsx'
+    with pd.ExcelWriter(filename) as writer:
+        long_df.to_excel(writer, sheet_name='Long Positions', index=False)
+        short_df.to_excel(writer, sheet_name='Short Positions', index=False)
+        summary_df = pd.DataFrame({
+            'Metric': ['Cumulative Long %', 'Cumulative Short %'],
+            'Value': [f"{long_cumulative:.2f}%", f"{short_cumulative:.2f}%"]
+        })
+        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+    
+    with open(filename, 'rb') as file:
+        await bot.send_document(
+            chat_id=config1.TELEGRAM_CHAT_ID,
+            document=file,
+            caption=f"Trading Positions - {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+    
+    os.remove(filename)
 
 # Main function
 async def main():
-    while True:
-        # Create tasks for all symbols to process concurrently
-        tasks = [process_symbol(symbol) for symbol in SELECTED_SYMBOLS]
-        await asyncio.gather(*tasks)
-        print("Finished checking all symbols, sleeping for 1800 seconds...")
-        await asyncio.sleep(1800)  # Sleep duration as needed
+    long_positions = []
+    short_positions = []
+    
+    print("Processing symbols...")
+    for symbol in SELECTED_SYMBOLS:
+        sym, percent, position, max_profit, trades, cum_profit = process_symbol(symbol)
+        if percent is not None:
+            if position == "Long":
+                long_positions.append((sym, percent, max_profit, trades, cum_profit))
+            elif position == "Short":
+                short_positions.append((sym, percent, max_profit, trades, cum_profit))
+    
+    # Calculate cumulative percentages
+    long_cumulative = sum(percent for _, percent, _, _, _ in long_positions)
+    short_cumulative = sum(percent for _, percent, _, _, _ in short_positions)
+    
+    # Sort results
+    long_positions.sort(key=lambda x: x[1], reverse=True)
+    short_positions.sort(key=lambda x: x[1], reverse=True)
+    
+    # Print results
+    print("\nLong Positions:")
+    print("Symbol | Change % | Max Profit % | Trades | Cumulative Profit %")
+    print("-" * 60)
+    for symbol, percent, max_p, trades, cum_p in long_positions:
+        print(f"{symbol:<12} | {percent:>6.2f}% | {max_p:>8.2f}% | {trades:>6} | {cum_p:>8.2f}%")
+    print(f"\nCumulative Long Positions Percentage: {long_cumulative:.2f}%")
+    
+    print("\nShort Positions:")
+    print("Symbol | Change % | Max Profit % | Trades | Cumulative Profit %")
+    print("-" * 60)
+    for symbol, percent, max_p, trades, cum_p in short_positions:
+        print(f"{symbol:<12} | {percent:>6.2f}% | {max_p:>8.2f}% | {trades:>6} | {cum_p:>8.2f}%")
+    print(f"\nCumulative Short Positions Percentage: {short_cumulative:.2f}%")
+    
+    await save_and_send_results(long_positions, short_positions, long_cumulative, short_cumulative)
 
-# Use nest_asyncio for Jupyter compatibility
-nest_asyncio.apply()
-
-# Create and run the event loop
-asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
